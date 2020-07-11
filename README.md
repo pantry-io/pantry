@@ -4,8 +4,8 @@
 [![CircleCI](https://circleci.com/gh/nickpoorman/nats-requeue.svg?style=svg)](https://circleci.com/gh/nickpoorman/nats-requeue)
 [![License](https://img.shields.io/badge/license-Apache%202-blue)](LICENSE.txt)
 
-This is a service that persists [NATS](https://github.com/nats-io)
-messages to disk and retries sending them at a deferred time.
+This is a service that persists [NATS](https://github.com/nats-io) messages to
+disk and retries sending them at a deferred time.
 
 ## Getting Started
 
@@ -28,5 +28,6 @@ running with `GOMAXPROCS=128`.
 
 ## Thanks
 
-This project uses [dgraph-io/badger](https://github.com/dgraph-io/badger) under
-the hood to store the messages.
+- [NATS](https://docs.nats.io/) for an awesome distributed messaging system.
+- This project uses [dgraph-io/badger](https://github.com/dgraph-io/badger) for
+  storing the messages on disk.
