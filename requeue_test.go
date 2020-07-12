@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	requeue "github.com/nickpoorman/nats-requeue"
+	"github.com/nickpoorman/nats-requeue/flatbuf"
 	"github.com/segmentio/ksuid"
 )
 
@@ -56,3 +58,7 @@ func Test_RequeueConnect(t *testing.T) {
 
 	<-rc.HasBeenClosed()
 }
+
+// func buildEvent(i int) []byte {
+	
+// }

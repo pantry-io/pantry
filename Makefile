@@ -14,6 +14,6 @@ vet:
 	go vet ./...
 
 protocol:
-	flatc --go-namespace requeue --filename-suffix .gen --gen-onefile --go -o . protocol/requeue_msg.fbs
+	flatc --go-namespace flatbuf --filename-suffix .gen --gen-onefile --go -o ./flatbuf protocol/requeue_msg.fbs
 
 .PHONY: default build generate security test vet protocol

@@ -1,4 +1,4 @@
-namespace requeue;
+namespace flatbuf;
 
 /// RequeueMeta holds meta information about requeue message functionality.
 table RequeueMeta {
