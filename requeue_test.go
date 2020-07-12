@@ -59,6 +59,6 @@ func Test_RequeueConnect(t *testing.T) {
 	<-rc.HasBeenClosed()
 }
 
-// func buildEvent(i int) []byte {
-	
-// }
+func buildEvent(i int) []byte {
+	RequeueMsg{}
+}

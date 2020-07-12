@@ -1,21 +1,23 @@
 namespace flatbuf;
 
+enum BackoffStrategy : byte { Undefined = 0, Exponential, Fixed }
+
 /// RequeueMeta holds meta information about requeue message functionality.
 table RequeueMeta {
     /// The number of times requeue should be attempted.
-    retries: int64;
+    retries: int64 = -1;
 
     /// The TTL for when the msssage should expire. This is useful for ensuring
 	/// messages are not retried after a certain time.
-    ttl: int64;
+    ttl: int64 = -1;
 
     /// The delay before the message should be replayed in nanoseconds.
-    delay: int64;
+    delay: int64 = -1;
 
     /// Backoff strategy that will be used for determining the next delay should
 	/// the message fail to be acknowledged on replay. i.e. fixed interval or
 	/// exponential
-    backoff_strategy: string;
+    backoff_strategy: BackoffStrategy;
 }
 
 /// The format for serializing requeue message.

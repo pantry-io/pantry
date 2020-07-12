@@ -3,8 +3,37 @@
 package flatbuf
 
 import (
+	"strconv"
+
 	flatbuffers "github.com/google/flatbuffers/go"
 )
+
+type BackoffStrategy int8
+
+const (
+	BackoffStrategyUndefined   BackoffStrategy = 0
+	BackoffStrategyExponential BackoffStrategy = 1
+	BackoffStrategyFixed       BackoffStrategy = 2
+)
+
+var EnumNamesBackoffStrategy = map[BackoffStrategy]string{
+	BackoffStrategyUndefined:   "Undefined",
+	BackoffStrategyExponential: "Exponential",
+	BackoffStrategyFixed:       "Fixed",
+}
+
+var EnumValuesBackoffStrategy = map[string]BackoffStrategy{
+	"Undefined":   BackoffStrategyUndefined,
+	"Exponential": BackoffStrategyExponential,
+	"Fixed":       BackoffStrategyFixed,
+}
+
+func (v BackoffStrategy) String() string {
+	if s, ok := EnumNamesBackoffStrategy[v]; ok {
+		return s
+	}
+	return "BackoffStrategy(" + strconv.FormatInt(int64(v), 10) + ")"
+}
 
 /// RequeueMeta holds meta information about requeue message functionality.
 type RequeueMeta struct {
@@ -33,7 +62,7 @@ func (rcv *RequeueMeta) Retries() int64 {
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
-	return 0
+	return -1
 }
 
 /// The number of times requeue should be attempted.
@@ -48,7 +77,7 @@ func (rcv *RequeueMeta) Ttl() int64 {
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
-	return 0
+	return -1
 }
 
 /// The TTL for when the msssage should expire. This is useful for ensuring
@@ -63,7 +92,7 @@ func (rcv *RequeueMeta) Delay() int64 {
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
-	return 0
+	return -1
 }
 
 /// The delay before the message should be replayed in nanoseconds.
@@ -74,31 +103,35 @@ func (rcv *RequeueMeta) MutateDelay(n int64) bool {
 /// Backoff strategy that will be used for determining the next delay should
 /// the message fail to be acknowledged on replay. i.e. fixed interval or
 /// exponential
-func (rcv *RequeueMeta) BackoffStrategy() []byte {
+func (rcv *RequeueMeta) BackoffStrategy() BackoffStrategy {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+		return BackoffStrategy(rcv._tab.GetInt8(o + rcv._tab.Pos))
 	}
-	return nil
+	return 0
 }
 
 /// Backoff strategy that will be used for determining the next delay should
 /// the message fail to be acknowledged on replay. i.e. fixed interval or
 /// exponential
+func (rcv *RequeueMeta) MutateBackoffStrategy(n BackoffStrategy) bool {
+	return rcv._tab.MutateInt8Slot(10, int8(n))
+}
+
 func RequeueMetaStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }
 func RequeueMetaAddRetries(builder *flatbuffers.Builder, retries int64) {
-	builder.PrependInt64Slot(0, retries, 0)
+	builder.PrependInt64Slot(0, retries, -1)
 }
 func RequeueMetaAddTtl(builder *flatbuffers.Builder, ttl int64) {
-	builder.PrependInt64Slot(1, ttl, 0)
+	builder.PrependInt64Slot(1, ttl, -1)
 }
 func RequeueMetaAddDelay(builder *flatbuffers.Builder, delay int64) {
-	builder.PrependInt64Slot(2, delay, 0)
+	builder.PrependInt64Slot(2, delay, -1)
 }
-func RequeueMetaAddBackoffStrategy(builder *flatbuffers.Builder, backoffStrategy flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(backoffStrategy), 0)
+func RequeueMetaAddBackoffStrategy(builder *flatbuffers.Builder, backoffStrategy BackoffStrategy) {
+	builder.PrependInt8Slot(3, int8(backoffStrategy), 0)
 }
 func RequeueMetaEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

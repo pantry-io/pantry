@@ -7,12 +7,13 @@ import (
 	"github.com/nickpoorman/nats-requeue/flatbuf"
 )
 
-type BackoffStrategy string
+// BackoffStrategy mirrors the flatbuf enum.
+type BackoffStrategy int8
 
 const (
-	BackoffStrategy_Fixed       = BackoffStrategy("fixed")
-	BackoffStrategy_Exponential = BackoffStrategy("exponential")
-	BackoffStrategy_Unknown     = BackoffStrategy("unknown")
+	BackoffStrategy_Undefined BackoffStrategy = iota
+	BackoffStrategy_Exponential
+	BackoffStrategy_Fixed
 )
 
 // Things we need to save in order to replay this message:
@@ -52,29 +53,26 @@ func (r *RequeueMeta) UnmarshalBinary(data []byte) error {
 }
 
 func (r *RequeueMeta) toFlatbuf(b *flatbuffers.Builder) flatbuffers.UOffsetT {
-	backoffStrategy := b.CreateByteString([]byte(r.BackoffStrategy))
-
 	flatbuf.RequeueMetaStart(b)
 	flatbuf.RequeueMetaAddRetries(b, r.Retries)
 	flatbuf.RequeueMetaAddTtl(b, r.TTL)
 	flatbuf.RequeueMetaAddDelay(b, r.Delay)
-	flatbuf.RequeueMetaAddBackoffStrategy(b, backoffStrategy)
+	flatbuf.RequeueMetaAddBackoffStrategy(b, r.backoffStrategyToFlatbuf())
 	return flatbuf.RequeueMetaEnd(b)
+}
+
+func (r *RequeueMeta) backoffStrategyToFlatbuf() flatbuf.BackoffStrategy {
+	if r.BackoffStrategy > BackoffStrategy_Fixed {
+		return flatbuf.BackoffStrategyUndefined
+	}
+	return flatbuf.BackoffStrategy(r.BackoffStrategy)
 }
 
 func (r *RequeueMeta) fromFlatbuf(m *flatbuf.RequeueMeta) {
 	r.Retries = m.Retries()
 	r.TTL = m.Ttl()
 	r.Delay = m.Delay()
-
-	switch BackoffStrategy(string(m.BackoffStrategy())) {
-	case BackoffStrategy_Fixed:
-		r.BackoffStrategy = BackoffStrategy_Fixed
-	case BackoffStrategy_Exponential:
-		r.BackoffStrategy = BackoffStrategy_Exponential
-	default:
-		r.BackoffStrategy = BackoffStrategy_Unknown
-	}
+	r.BackoffStrategy = BackoffStrategy(m.BackoffStrategy())
 }
 
 type RequeueMsg struct {
