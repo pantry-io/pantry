@@ -24,10 +24,6 @@ const (
 	// to automatically reconnect to nats on a failure.
 	DefaultNatsRetryOnFailure = true
 
-	// DefaultNatsMaxReconnects is the max number of retries requeue will
-	// attempt to connect to the NATS servers.
-	DefaultNatsMaxReconnects = 10
-
 	// DefaultNatsSubject is the deafult subject requeue will subscribe to for
 	// messages. By default `requeue.>` will match
 	// `requeue.foo`, `requeue.foo.bar`, and `requeue.foo.bar.baz`.
