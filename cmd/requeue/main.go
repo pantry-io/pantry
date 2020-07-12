@@ -49,10 +49,15 @@ func main() {
 		natsOpts = append(natsOpts, nats.UserCredentials(*userCreds))
 	}
 
+	// Badger directory. We generate one automatically.
+	badgerDataDir := "/tmp/badger"
+	badgerDataStableId := "123" // ksuid.New().String()
+
 	ctx := context.Background()
 
 	rc, err := requeue.Connect(
 		requeue.ConnectContext(ctx),
+		requeue.BadgerDataPath(badgerDataPath(badgerDataDir, badgerDataStableId)),
 		requeue.NATSOptions(natsOpts),
 		requeue.NATSServers(*urls),
 		requeue.NATSSubject(*subj),
@@ -63,6 +68,10 @@ func main() {
 			Err(err).
 			Msg("unable to connec to NATS server")
 	}
-	<-rc.Stopped()
-	log.Info().Msg("requeue terminated.")
+	<-rc.HasBeenClosed()
+	log.Info().Msg("requeue: terminated.")
+}
+
+func badgerDataPath(path string, stableId string) string {
+	return fmt.Sprintf("%s/%s", path, stableId)
 }

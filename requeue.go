@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	badger "github.com/dgraph-io/badger/v2"
 )
 
 const (
@@ -50,6 +53,14 @@ func Connect(options ...Option) (*Conn, error) {
 
 // Option is a function on the options to connect a Service.
 type Option func(*Options) error
+
+// ConnectContext sets the context to be used for connect.
+func ConnectContext(ctx context.Context) Option {
+	return func(o *Options) error {
+		o.ctx = ctx
+		return nil
+	}
+}
 
 // NATSServers is the nats server URLs (separated by comma).
 func NATSServers(natsServers string) Option {
@@ -98,22 +109,27 @@ func NATSConnectionError(connErrCb func(*Conn, error)) Option {
 	}
 }
 
-// ConnectContext sets the context to be used for connect.
-func ConnectContext(ctx context.Context) Option {
+// BadgerDataPath sets the context to be used for connect.
+func BadgerDataPath(path string) Option {
 	return func(o *Options) error {
-		o.ctx = ctx
+		o.BadgerDataPath = path
 		return nil
 	}
 }
 
 // Options can be used to create a customized Service connections.
 type Options struct {
-	ctx           context.Context
+	ctx context.Context
+
+	// Nats
 	NatsServers   string
 	NatsSubject   string
 	NatsQueueName string
 	NatsOptions   []nats.Option
 	NatsConnErrCB func(*Conn, error)
+
+	// Badger
+	BadgerDataPath string
 }
 
 func GetDefaultOptions() Options {
@@ -132,20 +148,23 @@ func GetDefaultOptions() Options {
 // Connect will attempt to connect to a NATS server with multiple options
 // and setup connections to the disk database.
 func (o Options) Connect() (*Conn, error) {
-	ctx, cancel := context.WithCancel(o.ctx)
-	o.ctx = ctx
-
-	rc := &Conn{
-		Opts:        o,
-		stoppedNats: make(chan struct{}),
-	}
+	rc := NewConn(o)
 
 	if err := rc.initNATS(); err != nil {
-		cancel()
+		rc.Close()
 		return nil, err
 	}
 
-	// TODO: Connect to message database
+	if err := rc.initBadger(); err != nil {
+		rc.Close()
+		return nil, err
+	}
+
+	go func() {
+		// Context closed.
+		<-o.ctx.Done()
+		rc.Close()
+	}()
 
 	// Setup the interrupt handler to drain so we don't miss
 	// requests when scaling down.
@@ -158,29 +177,57 @@ func (o Options) Connect() (*Conn, error) {
 	go func() {
 		<-c
 		// Got interrupt. Close things down.
-		cancel()
+		rc.Close()
 	}()
 
 	return rc, nil
 }
 
+type closers struct {
+	nats   *Closer
+	badger *Closer
+}
+
 type Conn struct {
 	Opts Options
 
-	// NATS
+	mu sync.Mutex
+
+	// Nats
 	nc  *nats.Conn
 	sub *nats.Subscription
 
-	stoppedNats chan struct{}
+	// Badger
+	badgerDB *badger.DB
+
+	closeOnce sync.Once
+	closed    chan struct{}
+	closers   closers
 }
 
-func (c *Conn) Stopped() <-chan struct{} {
-	return c.stoppedNats
+func NewConn(o Options) *Conn {
+	return &Conn{
+		Opts:   o,
+		closed: make(chan struct{}),
+		closers: closers{
+			nats:   NewCloser(0),
+			badger: NewCloser(0),
+		},
+	}
 }
 
-func (c *Conn) closeBadger() {
-	// TODO: Close down badger (flush all writes to disk)
-	// once NATS has been closed
+func (c *Conn) Close() {
+	c.closeOnce.Do(func() {
+		log.Info().Msg("requeue: closing...")
+		c.closers.nats.SignalAndWait()
+		c.closers.badger.SignalAndWait()
+		log.Info().Msg("requeue: closed")
+		close(c.closed)
+	})
+}
+
+func (c *Conn) HasBeenClosed() <-chan struct{} {
+	return c.closed
 }
 
 func (c *Conn) NATSDisconnectErrHandler(nc *nats.Conn, err error) {
@@ -198,9 +245,15 @@ func (c *Conn) NATSClosedHandler(nc *nats.Conn) {
 	if c.Opts.NatsConnErrCB != nil {
 		c.Opts.NatsConnErrCB(c, err)
 	}
+
+	// Close anything left open (such as badger).
+	c.Close()
 }
 
 func (c *Conn) initNATS() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	var err error
 	o := c.Opts
 	rc := c
@@ -221,24 +274,26 @@ func (c *Conn) initNATS() error {
 		return err
 	}
 
-	// Close nats when the context is cancelled.
+	// Close nats when the closer is signaled.
+	rc.closers.nats.AddRunning(1)
 	go func() {
-		<-o.ctx.Done()
+		defer rc.closers.nats.Done()
+		<-c.closers.nats.HasBeenClosed()
 
 		// Close nats
-		log.Info().Msg("draining nats...")
-		if err := c.nc.Drain(); err != nil {
-			log.Err(err).Msg("error draining nats")
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.nc != nil {
+			log.Debug().Msg("draining nats...")
+			if err := c.nc.Drain(); err != nil {
+				log.Err(err).Msg("error draining nats")
+			}
+			log.Debug().Msg("drained nats")
+
+			log.Debug().Msg("closing nats...")
+			c.nc.Close()
+			log.Debug().Msg("closed nats")
 		}
-		log.Info().Msg("drained nats")
-
-		log.Info().Msg("closing nats...")
-		c.nc.Close()
-		log.Info().Msg("closed nats")
-
-		// TODO: Block until the ClosedHandler / DisconnectErrHandler are called?
-
-		close(c.stoppedNats)
 	}()
 
 	// Subscribe to the subject using the queue group.
@@ -267,6 +322,41 @@ func (c *Conn) initNATS() error {
 				Str("subject", o.NatsSubject).
 				Str("queue", o.NatsQueueName)).
 		Msgf("Listening on [%s] in queue group [%s]", o.NatsSubject, o.NatsQueueName)
+
+	return nil
+}
+
+func (c *Conn) initBadger() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	openOpts := badger.DefaultOptions(c.Opts.BadgerDataPath)
+	openOpts.Logger = badgerLogger{}
+	// Open the Badger database located in the /tmp/badger directory.
+	// It will be created if it doesn't exist.
+	db, err := badger.Open(openOpts)
+	if err != nil {
+		log.Err(err).Msgf("problem opening badger data path: %s", c.Opts.BadgerDataPath)
+	}
+	c.badgerDB = db
+
+	c.closers.badger.AddRunning(1)
+	go func() {
+		defer c.closers.badger.Done()
+		<-c.closers.badger.HasBeenClosed()
+		// Badger cannot stop until nats has.
+		// This probably isn't necessary since we already wait for it to close
+		// before signaling badger to close, but adding it to be certain.
+		<-c.closers.nats.HasBeenClosed()
+
+		log.Debug().Msg("closing badger...")
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.badgerDB != nil {
+			c.badgerDB.Close()
+		}
+		log.Debug().Msg("closed badger")
+	}()
 
 	return nil
 }
