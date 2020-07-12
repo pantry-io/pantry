@@ -1,7 +1,7 @@
 /*
-Package rq implements a durable service that persists
+Package requeue implements a durable service that persists
 [NATS](https://github.com/nats-io) messages to disk and retries sending them at
-a later time.
+a deferred time.
 
 */
-package rq
+package requeue
