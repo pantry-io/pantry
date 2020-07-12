@@ -26,6 +26,16 @@ running with `GOMAXPROCS=128`.
 
 ### AWS ECS
 
+### Contributing
+
+This project uses [Flatbuffers](https://github.com/google/flatbuffers) to
+serialize messages. To build the `protocol/*.fbs` files you must have `flatc`
+installed and then run the following.
+
+```
+make flatc
+```
+
 ## Thanks
 
 - [NATS](https://docs.nats.io/) for an awesome distributed messaging system.

@@ -13,8 +13,7 @@ test:
 vet:
 	go vet ./...
 
-protoc:
-	docker pull namely/protoc-all
-	docker run -v `pwd`:/protocol namely/protoc-all -f requeue_msg.fbs -l go
+protocol:
+	flatc --go-namespace requeue --filename-suffix .gen --gen-onefile --go -o . protocol/requeue_msg.fbs
 
-.PHONY: default build generate security test vet
+.PHONY: default build generate security test vet protocol
