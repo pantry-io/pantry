@@ -1,0 +1,30 @@
+namespace requeue;
+
+// RequeueMeta holds meta information about requeue message functionality.
+table RequeueMeta {
+    // The number of times requeue should be attempted.
+    retries: int64;
+
+    // The TTL for when the msssage should expire. This is useful for ensuring
+	// messages are not retried after a certain time.
+    ttl: int64;
+
+    // The delay before the message should be replayed in nanoseconds.
+    delay: int64;
+
+    // Backoff strategy that will be used for determining the next delay should
+	// the message fail to be acknowledged on replay. i.e. fixed interval or
+	// exponential
+    backoff_strategy: string;
+}
+
+table RequeueMessage {
+    // RequeueMeta holds meta information about requeue message functionality.
+    meta: RequeueMeta;
+
+    // The original subject of the message.
+    original_subject: string;
+
+    // Original message payload
+    original_payload: [ubyte];
+}

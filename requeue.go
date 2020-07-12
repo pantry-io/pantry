@@ -402,18 +402,9 @@ func (c *Conn) initNatsConsumers() error {
 func (c *Conn) initNatsConsumer() {
 	defer c.closers.natsConsumers.Done()
 
-	// wb := NewWriteBatch(c.badgerDB)
 	wb := newBatchedWriter(c.badgerDB, time.Millisecond*500)
-
-	// Cancel function must be called if there's a chance that Flush might not
-	// get called. If neither Flush or Cancel is called, the transaction oracle
-	// would never get a chance to clear out the row commit timestamp map, thus
-	// causing an unbounded memory consumption. Typically, you can call Cancel
-	// as a defer statement right after NewWriteBatch is called. Note that any
-	// committed writes would still go through despite calling Cancel.
 	defer wb.Close()
 
-	// TODO: Ack the messages once they have been written. Flushed?
 	for {
 		select {
 		case msg := <-c.natsMsgCh:
@@ -421,7 +412,7 @@ func (c *Conn) initNatsConsumer() {
 
 			// A commit will trigger a batch of callbacks in a single
 			// goroutine. If this should not block other callbacks then
-			// spin up a goroutine in the cb.
+			// spin up a goroutine inside this cb.
 			cb := func(err error) {
 				if err != nil {
 					log.Err(err).Str("msg", string(msg.Data)).

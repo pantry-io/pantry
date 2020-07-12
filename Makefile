@@ -13,4 +13,8 @@ test:
 vet:
 	go vet ./...
 
+protoc:
+	docker pull namely/protoc-all
+	docker run -v `pwd`:/protocol namely/protoc-all -f requeue_msg.fbs -l go
+
 .PHONY: default build generate security test vet

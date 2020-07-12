@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dgraph-io/badger/v2"
+	badger "github.com/dgraph-io/badger/v2"
 	"github.com/rs/zerolog/log"
 )
 
@@ -66,6 +66,14 @@ func (bw *batchedWriter) flush(last bool) {
 func (bw *batchedWriter) Close() {
 	close(bw.quit)
 	<-bw.done
+
+	// Cancel function must be called if there's a chance that Flush might not
+	// get called. If neither Flush or Cancel is called, the transaction oracle
+	// would never get a chance to clear out the row commit timestamp map, thus
+	// causing an unbounded memory consumption. Typically, you can call Cancel
+	// as a defer statement right after NewWriteBatch is called. Note that any
+	// committed writes would still go through despite calling Cancel.
+	bw.wb.Cancel()
 }
 
 func (bw *batchedWriter) Set(k, v []byte, cb WriteBatchCommitCB) error {

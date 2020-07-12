@@ -38,7 +38,6 @@ func main() {
 
 	// NATS connect Options.
 	natsOpts := requeue.GetDefaultOptions().NatsOptions
-
 	natsOpts = append(natsOpts, []nats.Option{
 		nats.Name(*clientName),
 		nats.MaxReconnects(4),
