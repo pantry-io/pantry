@@ -7,12 +7,14 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	badger "github.com/dgraph-io/badger/v2"
+	"github.com/dgraph-io/badger/v2/y"
 )
 
 const (
@@ -200,9 +202,9 @@ func (o Options) Connect() (*Conn, error) {
 }
 
 type closers struct {
-	nats          *Closer
-	natsConsumers *Closer
-	badger        *Closer
+	nats          *y.Closer
+	natsConsumers *y.Closer
+	badger        *y.Closer
 }
 
 type Conn struct {
@@ -229,8 +231,9 @@ func NewConn(o Options) *Conn {
 		natsMsgCh: make(chan *nats.Msg),
 		closed:    make(chan struct{}),
 		closers: closers{
-			nats:   NewCloser(0),
-			badger: NewCloser(0),
+			nats:          y.NewCloser(0),
+			natsConsumers: y.NewCloser(0),
+			badger:        y.NewCloser(0),
 		},
 	}
 }
@@ -399,16 +402,45 @@ func (c *Conn) initNatsConsumers() error {
 func (c *Conn) initNatsConsumer() {
 	defer c.closers.natsConsumers.Done()
 
-	wb := c.badgerDB.NewWriteBatch()
+	// wb := NewWriteBatch(c.badgerDB)
+	wb := newBatchedWriter(c.badgerDB, time.Millisecond*500)
+
+	// Cancel function must be called if there's a chance that Flush might not
+	// get called. If neither Flush or Cancel is called, the transaction oracle
+	// would never get a chance to clear out the row commit timestamp map, thus
+	// causing an unbounded memory consumption. Typically, you can call Cancel
+	// as a defer statement right after NewWriteBatch is called. Note that any
+	// committed writes would still go through despite calling Cancel.
+	defer wb.Close()
+
 	// TODO: Ack the messages once they have been written. Flushed?
 	for {
 		select {
 		case msg := <-c.natsMsgCh:
 			fmt.Printf("Received a message: %s\n", string(msg.Data))
+
+			// A commit will trigger a batch of callbacks in a single
+			// goroutine. If this should not block other callbacks then
+			// spin up a goroutine in the cb.
+			cb := func(err error) {
+				if err != nil {
+					log.Err(err).Str("msg", string(msg.Data)).
+						Msgf("problem committing message: %s", string(msg.Data))
+				}
+				log.Debug().Str("msg", string(msg.Data)).
+					Msgf("committed message: %s", string(msg.Data))
+
+				// Ack the message
+				if err := msg.Respond(nil); err != nil {
+					log.Err(err).Str("msg", string(msg.Data)).
+						Msgf("problem sending ACK for message: %s", string(msg.Data))
+				}
+			}
+
 			// TODO: Get key and value from the message.
 			key := []byte{}
 			value := []byte{}
-			if err := wb.Set(key, value); err != nil {
+			if err := wb.Set(key, value, cb); err != nil {
 				log.Err(err).Msg("problem calling Set on WriteBatch")
 				if c.Opts.BadgerWriteMsgErr != nil {
 					c.Opts.BadgerWriteMsgErr(msg, err)
@@ -416,13 +448,7 @@ func (c *Conn) initNatsConsumer() {
 			}
 		case <-c.closers.natsConsumers.HasBeenClosed():
 			// The consumer has been asked to close.
-			// Flush our batch and then return.
-			if err := wb.Flush(); err != nil {
-				log.Err(err).Msg("problem calling Flush on WriteBatch")
-				if c.Opts.BadgerWriteMsgErr != nil {
-					c.Opts.BadgerWriteMsgErr(nil, err)
-				}
-			}
+			// Flushing will be handled by the above defer wb.Close()
 			return
 		}
 	}
