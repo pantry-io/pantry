@@ -58,6 +58,7 @@ func main() {
 	rc, err := requeue.Connect(
 		requeue.ConnectContext(ctx),
 		requeue.BadgerDataPath(badgerDataPath(badgerDataDir, badgerDataStableId)),
+		requeue.BadgerWriteMsgErr(badgerWriteMsgErr),
 		requeue.NATSOptions(natsOpts),
 		requeue.NATSServers(*urls),
 		requeue.NATSSubject(*subj),
@@ -74,4 +75,10 @@ func main() {
 
 func badgerDataPath(path string, stableId string) string {
 	return fmt.Sprintf("%s/%s", path, stableId)
+}
+
+func badgerWriteMsgErr(msg *nats.Msg, err error) {
+	log.Err(err).Interface("msg", msg.Data).Msg("problem writing message to Badger")
+	// This would be a good place to add extra logic such as optimistically
+	// replying to the message indicating there was a problem. i.e. Non-Ack
 }

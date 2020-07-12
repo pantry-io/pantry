@@ -117,6 +117,15 @@ func BadgerDataPath(path string) Option {
 	}
 }
 
+// BadgerWriteErr sets the callback to be triggered when there is an error
+// writing a message to Badger.
+func BadgerWriteMsgErr(cb func(*nats.Msg, error)) Option {
+	return func(o *Options) error {
+		o.BadgerWriteMsgErr = cb
+		return nil
+	}
+}
+
 // Options can be used to create a customized Service connections.
 type Options struct {
 	ctx context.Context
@@ -129,7 +138,8 @@ type Options struct {
 	NatsConnErrCB func(*Conn, error)
 
 	// Badger
-	BadgerDataPath string
+	BadgerDataPath    string
+	BadgerWriteMsgErr func(*nats.Msg, error)
 }
 
 func GetDefaultOptions() Options {
@@ -160,6 +170,12 @@ func (o Options) Connect() (*Conn, error) {
 		return nil, err
 	}
 
+	// Start consumers to process messages
+	if err := rc.initNatsConsumers(); err != nil {
+		rc.Close()
+		return nil, err
+	}
+
 	go func() {
 		// Context closed.
 		<-o.ctx.Done()
@@ -184,18 +200,20 @@ func (o Options) Connect() (*Conn, error) {
 }
 
 type closers struct {
-	nats   *Closer
-	badger *Closer
+	nats          *Closer
+	natsConsumers *Closer
+	badger        *Closer
 }
 
 type Conn struct {
 	Opts Options
 
-	mu sync.Mutex
+	mu sync.RWMutex
 
 	// Nats
-	nc  *nats.Conn
-	sub *nats.Subscription
+	nc        *nats.Conn
+	sub       *nats.Subscription
+	natsMsgCh chan *nats.Msg
 
 	// Badger
 	badgerDB *badger.DB
@@ -207,8 +225,9 @@ type Conn struct {
 
 func NewConn(o Options) *Conn {
 	return &Conn{
-		Opts:   o,
-		closed: make(chan struct{}),
+		Opts:      o,
+		natsMsgCh: make(chan *nats.Msg),
+		closed:    make(chan struct{}),
 		closers: closers{
 			nats:   NewCloser(0),
 			badger: NewCloser(0),
@@ -219,7 +238,11 @@ func NewConn(o Options) *Conn {
 func (c *Conn) Close() {
 	c.closeOnce.Do(func() {
 		log.Info().Msg("requeue: closing...")
+		// Stop nats
 		c.closers.nats.SignalAndWait()
+		// Stop processing nats messages
+		c.closers.natsConsumers.SignalAndWait()
+		// Stop badger
 		c.closers.badger.SignalAndWait()
 		log.Info().Msg("requeue: closed")
 		close(c.closed)
@@ -297,9 +320,7 @@ func (c *Conn) initNATS() error {
 	}()
 
 	// Subscribe to the subject using the queue group.
-	sub, err := rc.nc.QueueSubscribe(o.NatsSubject, o.NatsQueueName, func(m *nats.Msg) {
-		fmt.Printf("Received a message: %s\n", string(m.Data))
-	})
+	sub, err := rc.nc.QueueSubscribeSyncWithChan(o.NatsSubject, o.NatsQueueName, c.natsMsgCh)
 	if err != nil {
 		log.Err(err).Dict("nats",
 			zerolog.Dict().
@@ -359,4 +380,50 @@ func (c *Conn) initBadger() error {
 	}()
 
 	return nil
+}
+
+func (c *Conn) initNatsConsumers() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	numConsumers := 1
+	c.closers.natsConsumers.AddRunning(numConsumers)
+
+	for i := 0; i < numConsumers; i++ {
+		go c.initNatsConsumer()
+	}
+
+	return nil
+}
+
+func (c *Conn) initNatsConsumer() {
+	defer c.closers.natsConsumers.Done()
+
+	wb := c.badgerDB.NewWriteBatch()
+	// TODO: Ack the messages once they have been written. Flushed?
+	for {
+		select {
+		case msg := <-c.natsMsgCh:
+			fmt.Printf("Received a message: %s\n", string(msg.Data))
+			// TODO: Get key and value from the message.
+			key := []byte{}
+			value := []byte{}
+			if err := wb.Set(key, value); err != nil {
+				log.Err(err).Msg("problem calling Set on WriteBatch")
+				if c.Opts.BadgerWriteMsgErr != nil {
+					c.Opts.BadgerWriteMsgErr(msg, err)
+				}
+			}
+		case <-c.closers.natsConsumers.HasBeenClosed():
+			// The consumer has been asked to close.
+			// Flush our batch and then return.
+			if err := wb.Flush(); err != nil {
+				log.Err(err).Msg("problem calling Flush on WriteBatch")
+				if c.Opts.BadgerWriteMsgErr != nil {
+					c.Opts.BadgerWriteMsgErr(nil, err)
+				}
+			}
+			return
+		}
+	}
 }
