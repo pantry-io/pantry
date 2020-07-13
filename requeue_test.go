@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,26 +74,43 @@ func Test_RequeueConnect(t *testing.T) {
 
 	nc, err := nats.Connect(
 		clientURL,
+		nats.DisconnectErrHandler(func(con *nats.Conn, err error) {
+			log.Err(err).Msg("nats-producer: DisconnectErrHandler")
+		}),
+		nats.ReconnectHandler(func(con *nats.Conn) {
+			log.Info().Msgf("nats-producer: Got reconnected to %s!", con.ConnectedUrl())
+		}),
+		nats.ClosedHandler(func(con *nats.Conn) {
+			log.Info().Msg("nats-producer: ClosedHandler")
+		}),
 		nats.ErrorHandler(func(con *nats.Conn, sub *nats.Subscription, err error) {
-			log.Err(err).Msgf("nats-producer: Got err: conn=%s sub=%s err=%v!", con.Opts.Name, sub.Subject, err)
+			log.Err(err).Msgf("nats-producer: ErrorHandler: Got err: conn=%s sub=%s err=%v", con.Opts.Name, sub.Subject, err)
 		}),
 	)
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
 	}
 
+	total := 1000
+	pending := int64(total)
+
 	group, _ := errgroup.WithContext(context.Background())
 	// Send some events for requeue to persist
-	for i := 0; i < 100; i++ {
+	for i := 0; i < total; i++ {
 		group.Go(func(i int) func() error {
 			return func() error {
+				defer func() {
+					left := atomic.AddInt64(&pending, -1)
+					log.Debug().Msgf("number left: %d", left)
+				}()
+
 				msg, err := nc.Request(subject, buildPayload(i), 3000*time.Minute)
 				if err != nil {
 					if nc.LastError() != nil {
-						// t.Fatalf("%v for request", nc.LastError())
+						// log.Fatal().Msgf("%v for request", nc.LastError())
 						return fmt.Errorf("last error for request: %w", nc.LastError())
 					}
-					// t.Fatalf("%v for request", err)
+					// log.Fatal().Msgf("%v for request", err)
 					return fmt.Errorf("for request: %w", err)
 				}
 				if len(msg.Data) > 0 {
@@ -101,14 +119,17 @@ func Test_RequeueConnect(t *testing.T) {
 					// t.Errorf("Expected the ACK to be empty but got %s", string(msg.Data))
 					return fmt.Errorf("Expected the ACK to be empty but got %s", string(msg.Data))
 				}
+				// log.Debug().Msgf("got ack for: %d", i)
 				return nil
 			}
 		}(i))
 	}
 
 	if err := group.Wait(); err != nil {
-		t.Fatal(err)
+		log.Fatal().Err(err).Send()
 	}
+
+	log.Info().Int64("pending", pending).Msg("left terminated")
 
 	cancel()
 
@@ -122,7 +143,7 @@ func Test_RequeueConnect(t *testing.T) {
 
 	<-rc.HasBeenClosed()
 
-	log.Info().Msg("terminating.")
+	log.Info().Msg("right terminated.")
 }
 
 func buildPayload(i int) []byte {

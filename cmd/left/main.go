@@ -20,13 +20,13 @@ func main() {
 	nc, err := nats.Connect(
 		clientURL,
 		nats.DisconnectErrHandler(func(con *nats.Conn, err error) {
-			log.Err(err).Msgf("nats-producer: DisconnectErrHandler: conn=%s", con)
+			log.Err(err).Msgf("nats-producer: DisconnectErrHandler")
 		}),
 		nats.ReconnectHandler(func(con *nats.Conn) {
 			log.Info().Msgf("nats-producer: Got reconnected to %s!", con.ConnectedUrl())
 		}),
 		nats.ClosedHandler(func(con *nats.Conn) {
-			log.Info().Msgf("nats-producer: ClosedHandler: conn=%s", con)
+			log.Info().Msgf("nats-producer: ClosedHandler")
 		}),
 		nats.ErrorHandler(func(con *nats.Conn, sub *nats.Subscription, err error) {
 			log.Err(err).Msgf("nats-producer: ErrorHandler: Got err: conn=%s sub=%s err=%v", con.Opts.Name, sub.Subject, err)
