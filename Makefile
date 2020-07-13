@@ -17,4 +17,10 @@ vet:
 protocol:
 	flatc --go-namespace flatbuf --filename-suffix .gen --gen-onefile --go -o ./flatbuf protocol/requeue_msg.fbs
 
-.PHONY: default build generate security test vet protocol
+left:
+	GOMAXPROCS=128 CGO_ENABLED=0 go run cmd/left/main.go
+
+right:
+	GOMAXPROCS=128 CGO_ENABLED=0 go run cmd/right/main.go
+
+.PHONY: default build generate security test vet protocol left right
