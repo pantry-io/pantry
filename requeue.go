@@ -406,7 +406,7 @@ func (c *Conn) initNatsConsumers() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	numConsumers := 1
+	numConsumers := 5
 	c.closers.natsConsumers.AddRunning(numConsumers)
 
 	for i := 0; i < numConsumers; i++ {
@@ -419,7 +419,7 @@ func (c *Conn) initNatsConsumers() error {
 func (c *Conn) initNatsConsumer() {
 	defer c.closers.natsConsumers.Done()
 
-	wb := newBatchedWriter(c.badgerDB, 1*time.Second)
+	wb := newBatchedWriter(c.badgerDB, 10*time.Second)
 	defer wb.Close()
 
 	for {

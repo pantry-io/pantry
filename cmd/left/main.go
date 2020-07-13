@@ -20,13 +20,13 @@ func main() {
 	nc, err := nats.Connect(
 		clientURL,
 		nats.DisconnectErrHandler(func(con *nats.Conn, err error) {
-			log.Info().Msgf("nats-producer: DisconnectErrHandler: conn=%s sub=%s err=%v", con.Opts.Name, err)
+			log.Err(err).Msgf("nats-producer: DisconnectErrHandler: conn=%s", con)
 		}),
 		nats.ReconnectHandler(func(con *nats.Conn) {
 			log.Info().Msgf("nats-producer: Got reconnected to %s!", con.ConnectedUrl())
 		}),
 		nats.ClosedHandler(func(con *nats.Conn) {
-			log.Info().Msgf("nats-producer: ClosedHandler: conn=%s sub=%s", con.Opts.Name)
+			log.Info().Msgf("nats-producer: ClosedHandler: conn=%s", con)
 		}),
 		nats.ErrorHandler(func(con *nats.Conn, sub *nats.Subscription, err error) {
 			log.Err(err).Msgf("nats-producer: ErrorHandler: Got err: conn=%s sub=%s err=%v", con.Opts.Name, sub.Subject, err)
@@ -37,11 +37,13 @@ func main() {
 	}
 	defer nc.Close()
 
-	pending := int64(200000)
+	total := 1000000
+
+	pending := int64(total)
 
 	group, _ := errgroup.WithContext(context.Background())
 	// Send some events for requeue to persist
-	for i := 0; i < 200000; i++ {
+	for i := 0; i < total; i++ {
 		group.Go(func(i int) func() error {
 			return func() error {
 				defer func() {
@@ -74,7 +76,7 @@ func main() {
 		log.Fatal().Err(err).Send()
 	}
 
-	log.Info().Msg("left terminated")
+	log.Info().Int64("pending", pending).Msg("left terminated")
 }
 
 func buildPayload(i int) []byte {
