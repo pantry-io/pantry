@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nickpoorman/nats-requeue/flatbuf"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/segmentio/ksuid"
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/dgraph-io/badger/v2/y"
@@ -39,6 +41,8 @@ const (
 	// DefaultNatsQueueName is the default queue to subscribe to. Messages from
 	// the queue will be distributed amongst the the subscribers of the queue.
 	DefaultNatsQueueName = "requeue-workers"
+
+	keySeperator byte = '.'
 )
 
 func Connect(options ...Option) (*Conn, error) {
@@ -162,12 +166,12 @@ func GetDefaultOptions() Options {
 func (o Options) Connect() (*Conn, error) {
 	rc := NewConn(o)
 
-	if err := rc.initNATS(); err != nil {
+	if err := rc.initBadger(); err != nil {
 		rc.Close()
 		return nil, err
 	}
 
-	if err := rc.initBadger(); err != nil {
+	if err := rc.initNATS(); err != nil {
 		rc.Close()
 		return nil, err
 	}
@@ -257,17 +261,21 @@ func (c *Conn) HasBeenClosed() <-chan struct{} {
 }
 
 func (c *Conn) NATSDisconnectErrHandler(nc *nats.Conn, err error) {
-	log.Err(err).Msgf("nats: Got disconnected!")
+	log.Err(err).Msgf("nats-replay: Got disconnected!")
+}
+
+func (c *Conn) NATSErrorHandler(con *nats.Conn, sub *nats.Subscription, err error) {
+	log.Err(err).Msgf("nats-replay: Got err: conn=%s sub=%s err=%v!", con.Opts.Name, sub.Subject, err)
 }
 
 func (c *Conn) NATSReconnectHandler(nc *nats.Conn) {
 	// Note that this will be invoked for the first asynchronous connect.
-	log.Info().Msgf("nats: Got reconnected to %s!", nc.ConnectedUrl())
+	log.Info().Msgf("nats-replay: Got reconnected to %s!", nc.ConnectedUrl())
 }
 
 func (c *Conn) NATSClosedHandler(nc *nats.Conn) {
 	err := nc.LastError()
-	log.Err(err).Msg("nats: Connection closed")
+	log.Err(err).Msg("nats-replay: Connection closed")
 	if c.Opts.NatsConnErrCB != nil {
 		c.Opts.NatsConnErrCB(c, err)
 	}
@@ -290,12 +298,13 @@ func (c *Conn) initNATS() error {
 		nats.DisconnectErrHandler(rc.NATSDisconnectErrHandler),
 		nats.ReconnectHandler(rc.NATSReconnectHandler),
 		nats.ClosedHandler(rc.NATSClosedHandler),
+		nats.ErrorHandler(rc.NATSErrorHandler),
 	)
 
 	// Connect to NATS
 	rc.nc, err = nats.Connect(o.NatsServers, o.NatsOptions...)
 	if err != nil {
-		log.Err(err).Msgf("NATS: unable to connec to servers: %s", o.NatsServers)
+		log.Err(err).Msgf("nats-replay: unable to connec to servers: %s", o.NatsServers)
 		// Because we retry our connection, this error would be a configuration error.
 		return err
 	}
@@ -329,14 +338,17 @@ func (c *Conn) initNATS() error {
 			zerolog.Dict().
 				Str("subject", o.NatsSubject).
 				Str("queue", o.NatsQueueName)).
-			Msg("nats: unable to subscribe to queue")
+			Msg("nats-replay: unable to subscribe to queue")
 		return err
 	}
 	rc.sub = sub
+	// if err := rc.sub.SetPendingLimits(-1, -1); err != nil {
+	// 	log.Err(err).Msg("nats-replay: setting pending limits")
+	// }
 	rc.nc.Flush()
 
 	if err := rc.nc.LastError(); err != nil {
-		log.Err(err).Msg("nats: LastError")
+		log.Err(err).Msg("nats-replay: LastError")
 		return err
 	}
 
@@ -402,36 +414,55 @@ func (c *Conn) initNatsConsumers() error {
 func (c *Conn) initNatsConsumer() {
 	defer c.closers.natsConsumers.Done()
 
-	wb := newBatchedWriter(c.badgerDB, time.Millisecond*500)
+	wb := newBatchedWriter(c.badgerDB, 20*time.Second)
 	defer wb.Close()
 
 	for {
 		select {
 		case msg := <-c.natsMsgCh:
-			fmt.Printf("Received a message: %s\n", string(msg.Data))
+			fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
+			// decoded := RequeueMessageFromNATS(msg)
+			log.Debug().
+				Str("msg", string(fb.OriginalPayloadBytes())).
+				Msg("received a message")
 
 			// A commit will trigger a batch of callbacks in a single
 			// goroutine. If this should not block other callbacks then
 			// spin up a goroutine inside this cb.
 			cb := func(err error) {
 				if err != nil {
-					log.Err(err).Str("msg", string(msg.Data)).
-						Msgf("problem committing message: %s", string(msg.Data))
+					log.Err(err).
+						Str("msg", string(fb.OriginalPayloadBytes())).
+						Msgf("problem committing message")
 				}
-				log.Debug().Str("msg", string(msg.Data)).
-					Msgf("committed message: %s", string(msg.Data))
+				log.Debug().
+					Str("msg", string(fb.OriginalPayloadBytes())).
+					Msgf("committed message")
 
 				// Ack the message
-				if err := msg.Respond(nil); err != nil {
-					log.Err(err).Str("msg", string(msg.Data)).
-						Msgf("problem sending ACK for message: %s", string(msg.Data))
+				if err := msg.Respond([]byte("ok")); err != nil {
+					log.Err(err).
+						Str("msg", string(fb.OriginalPayloadBytes())).
+						Msgf("problem sending ACK for message")
 				}
 			}
 
-			// TODO: Get key and value from the message.
-			key := []byte{}
-			value := []byte{}
-			if err := wb.Set(key, value, cb); err != nil {
+			// Build the key
+			// TODO(nickpoorman): Write benchmark to see which of these is faster
+			key := []byte(fmt.Sprintf("%s.%s", string(flatbuf.GetRootAsRequeueMessage(msg.Data, 0).OriginalSubject()), ksuid.New().String()))
+			// TODO(nickpoorman): This may be faster but I need to test it out
+			// o := fb.OriginalSubject()
+			// k := ksuid.New().Bytes() // can we use unencoded use bytes here or do we need .String()?
+			// key := make([]byte, len(o)+len(k)+1)
+			// copy(key, o)
+			// key[len(o)] = keySeperator
+			// copy(key[len(o)+1:], k)
+			// log.Debug().Msgf("created key: %s", string(key))
+
+			if err := wb.Set(
+				key,
+				msg.Data,
+				cb); err != nil {
 				log.Err(err).Msg("problem calling Set on WriteBatch")
 				if c.Opts.BadgerWriteMsgErr != nil {
 					c.Opts.BadgerWriteMsgErr(msg, err)

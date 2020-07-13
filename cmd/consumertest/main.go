@@ -1,11 +1,10 @@
-package requeue_test
+package main
 
 import (
 	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -15,25 +14,25 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func cleanUp(t *testing.T, path string) {
-	t.Cleanup(func() {
-		err := os.RemoveAll(path)
-		if err != nil {
-			fmt.Println(err)
-		}
-	})
+const Name = "consumertest"
+
+func cleanUp(path string) {
+	err := os.RemoveAll(path)
+	if err != nil {
+		fmt.Println(err)
+	}
 }
 
-func setup(t *testing.T) string {
-	dir, err := ioutil.TempDir("", fmt.Sprintf("%s-*", t.Name()))
+func setup() string {
+	dir, err := ioutil.TempDir("", fmt.Sprintf("%s-*", Name))
 	if err != nil {
-		t.Fatal(err)
+		log.Fatal().Err(err).Send()
 	}
-	cleanUp(t, dir)
+
 	return dir
 }
 
-func Test_RequeueConnect(t *testing.T) {
+func main() {
 	// s := natsserver.RunDefaultServer()
 	// defaultOpts := natsserver.DefaultTestOptions
 	// defaultOpts.NoSigs = false
@@ -42,8 +41,9 @@ func Test_RequeueConnect(t *testing.T) {
 	// 	s.Shutdown()
 	// })
 
-	dir := setup(t)
-	dataPath := fmt.Sprintf("%s/%s_%s", dir, t.Name(), ksuid.New().String())
+	dir := setup()
+	defer cleanUp(dir)
+	dataPath := fmt.Sprintf("%s/%s_%s", dir, Name, ksuid.New().String())
 	subject := "requeue.msgs"
 
 	// clientURL := s.ClientURL()
@@ -53,7 +53,7 @@ func Test_RequeueConnect(t *testing.T) {
 	// NATS connect Options.
 	natsOpts := requeue.GetDefaultOptions().NatsOptions
 	natsOpts = append(natsOpts, []nats.Option{
-		nats.Name(fmt.Sprintf("test_requeue_%s", t.Name())),
+		nats.Name(fmt.Sprintf("test_requeue_%s", Name)),
 		nats.MaxReconnects(10),
 	}...)
 
@@ -68,7 +68,7 @@ func Test_RequeueConnect(t *testing.T) {
 		requeue.NATSQueueName(requeue.DefaultNatsQueueName),
 	)
 	if err != nil {
-		t.Fatalf("Error on requeue connect: %v", err)
+		log.Fatal().Msgf("Error on requeue connect: %v", err)
 	}
 
 	nc, err := nats.Connect(
@@ -78,7 +78,7 @@ func Test_RequeueConnect(t *testing.T) {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("Error on connect: %v", err)
+		log.Fatal().Msgf("Error on connect: %v", err)
 	}
 
 	group, _ := errgroup.WithContext(context.Background())
@@ -89,10 +89,10 @@ func Test_RequeueConnect(t *testing.T) {
 				msg, err := nc.Request(subject, buildPayload(i), 3000*time.Minute)
 				if err != nil {
 					if nc.LastError() != nil {
-						// t.Fatalf("%v for request", nc.LastError())
+						// log.Fatal().Msgf("%v for request", nc.LastError())
 						return fmt.Errorf("last error for request: %w", nc.LastError())
 					}
-					// t.Fatalf("%v for request", err)
+					// log.Fatal().Msgf("%v for request", err)
 					return fmt.Errorf("for request: %w", err)
 				}
 				if len(msg.Data) > 0 {
@@ -107,7 +107,7 @@ func Test_RequeueConnect(t *testing.T) {
 	}
 
 	if err := group.Wait(); err != nil {
-		t.Fatal(err)
+		log.Fatal().Err(err).Send()
 	}
 
 	cancel()

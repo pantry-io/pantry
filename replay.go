@@ -1,9 +1,12 @@
 package requeue
 
 import (
+	"bytes"
 	"encoding"
+	"io"
 
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
 )
 
@@ -39,11 +42,28 @@ type RequeueMeta struct {
 	BackoffStrategy BackoffStrategy
 }
 
-func (r *RequeueMeta) MarshalBinary() ([]byte, error) {
+func DefaultRequeueMeta() RequeueMeta {
+	return RequeueMeta{
+		Retries:         -1,
+		TTL:             -1,
+		Delay:           -1,
+		BackoffStrategy: BackoffStrategy_Undefined,
+	}
+}
+
+func (r *RequeueMeta) Bytes() []byte {
 	b := flatbuffers.NewBuilder(0)
 	meta := r.toFlatbuf(b)
 	b.Finish(meta)
-	return b.FinishedBytes(), nil
+	return b.FinishedBytes()
+}
+
+func (r *RequeueMeta) MarshalBinary() ([]byte, error) {
+	return r.Bytes(), nil
+}
+
+func (r *RequeueMeta) NewReader() io.Reader {
+	return bytes.NewReader(r.Bytes())
 }
 
 func (r *RequeueMeta) UnmarshalBinary(data []byte) error {
@@ -75,7 +95,7 @@ func (r *RequeueMeta) fromFlatbuf(m *flatbuf.RequeueMeta) {
 	r.BackoffStrategy = BackoffStrategy(m.BackoffStrategy())
 }
 
-type RequeueMsg struct {
+type RequeueMessage struct {
 	Meta RequeueMeta
 
 	// The original subject of the message.
@@ -85,20 +105,41 @@ type RequeueMsg struct {
 	OriginalPayload []byte
 }
 
-func (r *RequeueMsg) MarshalBinary() ([]byte, error) {
+func DefaultRequeueMessage() RequeueMessage {
+	return RequeueMessage{
+		Meta: DefaultRequeueMeta(),
+	}
+}
+
+func RequeueMessageFromNATS(msg *nats.Msg) RequeueMessage {
+	m := DefaultRequeueMessage()
+	// Unmarshal currently doesn't return any errors
+	_ = m.UnmarshalBinary(msg.Data)
+	return m
+}
+
+func (r *RequeueMessage) Bytes() []byte {
 	b := flatbuffers.NewBuilder(0)
 	msg := r.toFlatbuf(b)
 	b.Finish(msg)
-	return b.FinishedBytes(), nil
+	return b.FinishedBytes()
 }
 
-func (r *RequeueMsg) UnmarshalBinary(data []byte) error {
+func (r *RequeueMessage) MarshalBinary() ([]byte, error) {
+	return r.Bytes(), nil
+}
+
+func (r *RequeueMessage) NewReader() io.Reader {
+	return bytes.NewReader(r.Bytes())
+}
+
+func (r *RequeueMessage) UnmarshalBinary(data []byte) error {
 	m := flatbuf.GetRootAsRequeueMessage(data, 0)
 	r.fromFlatbuf(m)
 	return nil
 }
 
-func (r *RequeueMsg) toFlatbuf(b *flatbuffers.Builder) flatbuffers.UOffsetT {
+func (r *RequeueMessage) toFlatbuf(b *flatbuffers.Builder) flatbuffers.UOffsetT {
 	meta := r.Meta.toFlatbuf(b)
 
 	originalSubject := b.CreateByteString([]byte(r.OriginalSubject))
@@ -111,7 +152,7 @@ func (r *RequeueMsg) toFlatbuf(b *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return flatbuf.RequeueMessageEnd(b)
 }
 
-func (r *RequeueMsg) fromFlatbuf(m *flatbuf.RequeueMessage) {
+func (r *RequeueMessage) fromFlatbuf(m *flatbuf.RequeueMessage) {
 	r.Meta.fromFlatbuf(m.Meta(nil))
 	r.OriginalSubject = string(m.OriginalSubject())
 	r.OriginalPayload = m.OriginalPayloadBytes()
@@ -120,6 +161,6 @@ func (r *RequeueMsg) fromFlatbuf(m *flatbuf.RequeueMessage) {
 var (
 	_ encoding.BinaryMarshaler   = (*RequeueMeta)(nil)
 	_ encoding.BinaryUnmarshaler = (*RequeueMeta)(nil)
-	_ encoding.BinaryMarshaler   = (*RequeueMsg)(nil)
-	_ encoding.BinaryUnmarshaler = (*RequeueMsg)(nil)
+	_ encoding.BinaryMarshaler   = (*RequeueMessage)(nil)
+	_ encoding.BinaryUnmarshaler = (*RequeueMessage)(nil)
 )

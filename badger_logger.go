@@ -7,17 +7,17 @@ import "github.com/rs/zerolog/log"
 type badgerLogger struct{}
 
 func (b badgerLogger) Errorf(fmt string, v ...interface{}) {
-	log.Error().Msgf(fmt, v)
+	log.Error().Msgf(fmt, v...)
 }
 
 func (b badgerLogger) Warningf(fmt string, v ...interface{}) {
-	log.Warn().Msgf(fmt, v)
+	log.Warn().Msgf(fmt, v...)
 }
 
 func (b badgerLogger) Infof(fmt string, v ...interface{}) {
-	log.Info().Msgf(fmt, v)
+	log.Info().Msgf(fmt, v...)
 }
 
 func (b badgerLogger) Debugf(fmt string, v ...interface{}) {
-	log.Debug().Msgf(fmt, v)
+	log.Debug().Msgf(fmt, v...)
 }
