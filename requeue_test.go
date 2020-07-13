@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	requeue "github.com/nickpoorman/nats-requeue"
 	"github.com/rs/zerolog/log"
@@ -35,13 +36,13 @@ func setup(t *testing.T) string {
 }
 
 func Test_RequeueConnect(t *testing.T) {
-	// s := natsserver.RunDefaultServer()
+	s := natsserver.RunDefaultServer()
 	// defaultOpts := natsserver.DefaultTestOptions
 	// defaultOpts.NoSigs = false
 	// s := natsserver.RunServer(&defaultOpts)
-	// t.Cleanup(func() {
-	// 	s.Shutdown()
-	// })
+	t.Cleanup(func() {
+		s.Shutdown()
+	})
 
 	dir := setup(t)
 	dataPath := fmt.Sprintf("%s/%s_%s", dir, t.Name(), ksuid.New().String())
