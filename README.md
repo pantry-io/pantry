@@ -24,6 +24,9 @@ Badger
 [recommends](https://github.com/dgraph-io/badger#are-there-any-go-specific-settings-that-i-should-use)
 running with `GOMAXPROCS=128`.
 
+I would recommend setting your soft ulimit to `65535`. Google how to do it on your
+[OS](https://gist.github.com/luckydev/b2a6ebe793aeacf50ff15331fb3b519d).
+
 ### AWS ECS
 
 ### Contributing
