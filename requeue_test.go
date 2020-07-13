@@ -121,6 +121,8 @@ func Test_RequeueConnect(t *testing.T) {
 	// 4. Verify we get the requeued messages.
 
 	<-rc.HasBeenClosed()
+
+	log.Info().Msg("terminating.")
 }
 
 func buildPayload(i int) []byte {

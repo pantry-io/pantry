@@ -27,7 +27,7 @@ import (
 
 type WriteBatchCommitCB func(error)
 
-var InitCommitCBsCapacity = 20
+var InitCommitCBsCapacity = 10000
 
 // WriteBatch holds the necessary info to perform batched writes.
 type WriteBatch struct {

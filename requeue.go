@@ -265,6 +265,7 @@ func (c *Conn) NATSDisconnectErrHandler(nc *nats.Conn, err error) {
 }
 
 func (c *Conn) NATSErrorHandler(con *nats.Conn, sub *nats.Subscription, err error) {
+	// sub.Pending()
 	log.Err(err).Msgf("nats-replay: Got err: conn=%s sub=%s err=%v!", con.Opts.Name, sub.Subject, err)
 }
 
@@ -331,8 +332,15 @@ func (c *Conn) initNATS() error {
 		}
 	}()
 
+	sub, err := rc.nc.QueueSubscribe(o.NatsSubject, o.NatsQueueName, func(msg *nats.Msg) {
+		// fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
+		// log.Debug().Str("msg", string(fb.OriginalPayloadBytes())).Msg("got message")
+		c.natsMsgCh <- msg
+		// log.Debug().Str("msg", string(fb.OriginalPayloadBytes())).Msg("processed message")
+	})
+
 	// Subscribe to the subject using the queue group.
-	sub, err := rc.nc.QueueSubscribeSyncWithChan(o.NatsSubject, o.NatsQueueName, c.natsMsgCh)
+	// sub, err := rc.nc.QueueSubscribeSyncWithChan(o.NatsSubject, o.NatsQueueName, c.natsMsgCh)
 	if err != nil {
 		log.Err(err).Dict("nats",
 			zerolog.Dict().
@@ -342,9 +350,6 @@ func (c *Conn) initNATS() error {
 		return err
 	}
 	rc.sub = sub
-	// if err := rc.sub.SetPendingLimits(-1, -1); err != nil {
-	// 	log.Err(err).Msg("nats-replay: setting pending limits")
-	// }
 	rc.nc.Flush()
 
 	if err := rc.nc.LastError(); err != nil {
@@ -414,7 +419,7 @@ func (c *Conn) initNatsConsumers() error {
 func (c *Conn) initNatsConsumer() {
 	defer c.closers.natsConsumers.Done()
 
-	wb := newBatchedWriter(c.badgerDB, 20*time.Second)
+	wb := newBatchedWriter(c.badgerDB, 1*time.Second)
 	defer wb.Close()
 
 	for {
@@ -429,23 +434,35 @@ func (c *Conn) initNatsConsumer() {
 			// A commit will trigger a batch of callbacks in a single
 			// goroutine. If this should not block other callbacks then
 			// spin up a goroutine inside this cb.
-			cb := func(err error) {
-				if err != nil {
-					log.Err(err).
+			cb := func(msg *nats.Msg) func(err error) {
+				return func(err error) {
+					fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
+					if err != nil {
+						log.Err(err).
+							Str("msg", string(fb.OriginalPayloadBytes())).
+							Msgf("problem committing message")
+					}
+					ml, bl, err := c.sub.PendingLimits()
+					if err != nil {
+						log.Err(err).Msg("PendingLimits")
+					}
+					log.Debug().
 						Str("msg", string(fb.OriginalPayloadBytes())).
-						Msgf("problem committing message")
-				}
-				log.Debug().
-					Str("msg", string(fb.OriginalPayloadBytes())).
-					Msgf("committed message")
+						Int("pending-limits-msg", ml).
+						Int("pending-limits-size", bl).
+						Str("Reply", msg.Reply).
+						Str("Subject", msg.Subject).
+						Msgf("committed message")
 
-				// Ack the message
-				if err := msg.Respond([]byte("ok")); err != nil {
-					log.Err(err).
-						Str("msg", string(fb.OriginalPayloadBytes())).
-						Msgf("problem sending ACK for message")
+					// Ack the message
+					if err := msg.Respond(nil); err != nil {
+						log.Err(err).
+							Str("msg", string(fb.OriginalPayloadBytes())).
+							Msgf("problem sending ACK for message")
+					}
+
 				}
-			}
+			}(msg)
 
 			// Build the key
 			// TODO(nickpoorman): Write benchmark to see which of these is faster

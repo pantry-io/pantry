@@ -51,10 +51,10 @@ func (bw *batchedWriter) flush(last bool) {
 	bw.mu.Lock()
 	defer bw.mu.Unlock()
 
-	log.Debug().Msg("flushing writes to badger")
+	log.Debug().Msg("batched-writer: flushing writes to badger")
 	if err := bw.wb.Flush(); err != nil {
 		// Not the best error handling, but you could have some kind of callback too.
-		log.Err(err).Msgf("could not flush: %v", err)
+		log.Err(err).Msgf("batched-writer: could not flush: %v", err)
 	}
 	if last {
 		bw.wb = nil
