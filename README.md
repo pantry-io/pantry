@@ -7,7 +7,7 @@
 This is a service that persists [NATS](https://github.com/nats-io) messages to
 disk and retries sending them at a deferred time.
 
-# THIS IS STILL BEING IMPLEMENTED. IT IS NOT READY FOR USE YET.
+# THIS IS STILL BEING IMPLEMENTED. IT IS NOT READY FOR USE.
 
 ## Getting Started
 
