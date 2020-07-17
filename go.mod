@@ -3,6 +3,7 @@ module github.com/nickpoorman/nats-requeue
 go 1.14
 
 require (
+	github.com/cenkalti/backoff/v4 v4.0.2
 	github.com/dgraph-io/badger/v2 v2.0.3
 	github.com/google/flatbuffers v1.12.0
 	github.com/nats-io/nats-server/v2 v2.1.8-0.20200617224755-fa744fdcdaa3

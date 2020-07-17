@@ -29,7 +29,17 @@ I would recommend setting your soft ulimit to `65535`. Google how to do it on yo
 
 ### AWS ECS
 
-### Contributing
+## Uses
+
+### DLQ (dead letter queue)
+
+TODO
+
+### Disk-backed Buffer
+
+TODO
+
+## Contributing
 
 This project uses [Flatbuffers](https://github.com/google/flatbuffers) to
 serialize messages. To build the `protocol/*.fbs` files you must have `flatc`

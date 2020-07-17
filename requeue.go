@@ -43,6 +43,8 @@ const (
 	DefaultNatsQueueName = "requeue-workers"
 
 	keySeperator byte = '.'
+
+	DefaultNumConcurrentBatchTransactions = 4
 )
 
 func Connect(options ...Option) (*Conn, error) {
@@ -264,9 +266,20 @@ func (c *Conn) NATSDisconnectErrHandler(nc *nats.Conn, err error) {
 	log.Err(err).Msgf("nats-replay: Got disconnected!")
 }
 
-func (c *Conn) NATSErrorHandler(con *nats.Conn, sub *nats.Subscription, err error) {
-	// sub.Pending()
-	log.Err(err).Msgf("nats-replay: Got err: conn=%s sub=%s err=%v!", con.Opts.Name, sub.Subject, err)
+func (c *Conn) NATSErrorHandler(con *nats.Conn, sub *nats.Subscription, natsErr error) {
+	log.Err(natsErr).Msgf("nats-replay: Got err: conn=%s sub=%s err=%v!", con.Opts.Name, sub.Subject, natsErr)
+
+	if natsErr == nats.ErrSlowConsumer {
+		pendingMsgs, _, err := sub.Pending()
+		if err != nil {
+			log.Err(err).Msg("nats-replay: couldn't get pending messages")
+			return
+		}
+		log.Err(err).Msgf("nats-replay: Falling behind with %d pending messages on subject %q.\n",
+			pendingMsgs, sub.Subject)
+		// Log error, notify operations...
+	}
+	// check for other errors
 }
 
 func (c *Conn) NATSReconnectHandler(nc *nats.Conn) {
@@ -349,6 +362,11 @@ func (c *Conn) initNATS() error {
 			Msg("nats-replay: unable to subscribe to queue")
 		return err
 	}
+	// if err := sub.SetPendingLimits(10000, -1); err != nil {
+	// 	log.Err(err).Msg("nats-replay: SetPendingLimits")
+	// 	// Don't die, we'll just continue with the default limits.
+	// }
+
 	rc.sub = sub
 	rc.nc.Flush()
 
@@ -406,11 +424,9 @@ func (c *Conn) initNatsConsumers() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	numConsumers := 4
-	c.closers.natsConsumers.AddRunning(numConsumers)
+	c.closers.natsConsumers.AddRunning(DefaultNumConcurrentBatchTransactions)
 
-	for i := 0; i < numConsumers; i++ {
-		time.Sleep(100 * time.Millisecond)
+	for i := 0; i < DefaultNumConcurrentBatchTransactions; i++ {
 		go c.initNatsConsumer()
 	}
 
@@ -420,7 +436,7 @@ func (c *Conn) initNatsConsumers() error {
 func (c *Conn) initNatsConsumer() {
 	defer c.closers.natsConsumers.Done()
 
-	wb := newBatchedWriter(c.badgerDB, 1*time.Second)
+	wb := newBatchedWriter(c.badgerDB, 15*time.Millisecond)
 	defer wb.Close()
 
 	for {
@@ -443,14 +459,14 @@ func (c *Conn) initNatsConsumer() {
 							Str("msg", string(fb.OriginalPayloadBytes())).
 							Msgf("problem committing message")
 					}
-					ml, bl, err := c.sub.PendingLimits()
-					if err != nil {
-						log.Err(err).Msg("PendingLimits")
-					}
+					// ml, bl, err := c.sub.PendingLimits()
+					// if err != nil {
+					// 	log.Err(err).Msg("PendingLimits")
+					// }
 					log.Debug().
 						Str("msg", string(fb.OriginalPayloadBytes())).
-						Int("pending-limits-msg", ml).
-						Int("pending-limits-size", bl).
+						// Int("pending-limits-msg", ml).
+						// Int("pending-limits-size", bl).
 						Str("Reply", msg.Reply).
 						Str("Subject", msg.Subject).
 						Msgf("committed message")

@@ -27,7 +27,7 @@ import (
 
 type WriteBatchCommitCB func(error)
 
-var InitCommitCBsCapacity = 10000
+var InitCommitCBsCapacity = 2000
 
 // WriteBatch holds the necessary info to perform batched writes.
 type WriteBatch struct {
@@ -77,18 +77,20 @@ func (wb *WriteBatch) Cancel() {
 func (wb *WriteBatch) callback(err error) {
 	// sync.WaitGroup is thread-safe, so it doesn't need to be run inside wb.Lock.
 	defer wb.throttle.Done(err)
+
+	wb.Lock()
+	defer wb.Unlock()
+
+	wb.execCommitHandlers(err)
+
 	if err == nil {
 		return
 	}
 
-	wb.Lock()
-	defer wb.Unlock()
 	if wb.err != nil {
 		return
 	}
 	wb.err = err
-
-	wb.execCommitHandlers(err)
 }
 
 // Should be called with lock acquired.
@@ -98,14 +100,13 @@ func (wb *WriteBatch) execCommitHandlers(err error) {
 		return
 	}
 
-	c := wb.commitCBs
-	go func(cbs []WriteBatchCommitCB) {
-		for _, cb := range cbs {
-			if cb != nil {
-				cb(err)
-			}
+	log.Info().Msgf("number of callbacks: %d", len(wb.commitCBs))
+
+	for _, cb := range wb.commitCBs {
+		if cb != nil {
+			go cb(err)
 		}
-	}(c)
+	}
 
 	// Reset the callback list
 	wb.commitCBs = make([]WriteBatchCommitCB, 0, InitCommitCBsCapacity)
