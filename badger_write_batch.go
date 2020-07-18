@@ -102,11 +102,13 @@ func (wb *WriteBatch) execCommitHandlers(err error) {
 
 	log.Info().Msgf("number of callbacks: %d", len(wb.commitCBs))
 
-	for _, cb := range wb.commitCBs {
-		if cb != nil {
-			go cb(err)
+	go func(cbs []WriteBatchCommitCB) {
+		for _, cb := range cbs {
+			if cb != nil {
+				go cb(err)
+			}
 		}
-	}
+	}(wb.commitCBs)
 
 	// Reset the callback list
 	wb.commitCBs = make([]WriteBatchCommitCB, 0, InitCommitCBsCapacity)

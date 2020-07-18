@@ -421,8 +421,8 @@ func (c *Conn) initBadger() error {
 }
 
 func (c *Conn) initNatsConsumers() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	c.closers.natsConsumers.AddRunning(DefaultNumConcurrentBatchTransactions)
 
@@ -434,78 +434,84 @@ func (c *Conn) initNatsConsumers() error {
 }
 
 func (c *Conn) initNatsConsumer() {
-	defer c.closers.natsConsumers.Done()
+	c.mu.RLock()
+	natsConsumer := c.closers.natsConsumers
+	defer natsConsumer.Done()
 
 	wb := newBatchedWriter(c.badgerDB, 15*time.Millisecond)
 	defer wb.Close()
+	c.mu.RUnlock()
 
 	for {
 		select {
 		case msg := <-c.natsMsgCh:
-			fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
-			// decoded := RequeueMessageFromNATS(msg)
-			log.Debug().
-				Str("msg", string(fb.OriginalPayloadBytes())).
-				Msg("received a message")
-
-			// A commit will trigger a batch of callbacks in a single
-			// goroutine. If this should not block other callbacks then
-			// spin up a goroutine inside this cb.
-			cb := func(msg *nats.Msg) func(err error) {
-				return func(err error) {
-					fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
-					if err != nil {
-						log.Err(err).
-							Str("msg", string(fb.OriginalPayloadBytes())).
-							Msgf("problem committing message")
-					}
-					// ml, bl, err := c.sub.PendingLimits()
-					// if err != nil {
-					// 	log.Err(err).Msg("PendingLimits")
-					// }
-					log.Debug().
-						Str("msg", string(fb.OriginalPayloadBytes())).
-						// Int("pending-limits-msg", ml).
-						// Int("pending-limits-size", bl).
-						Str("Reply", msg.Reply).
-						Str("Subject", msg.Subject).
-						Msgf("committed message")
-
-					// Ack the message
-					if err := msg.Respond(nil); err != nil {
-						log.Err(err).
-							Str("msg", string(fb.OriginalPayloadBytes())).
-							Msgf("problem sending ACK for message")
-					}
-
-				}
-			}(msg)
-
-			// Build the key
-			// TODO(nickpoorman): Write benchmark to see which of these is faster
-			key := []byte(fmt.Sprintf("%s.%s", string(flatbuf.GetRootAsRequeueMessage(msg.Data, 0).OriginalSubject()), ksuid.New().String()))
-			// TODO(nickpoorman): This may be faster but I need to test it out
-			// o := fb.OriginalSubject()
-			// k := ksuid.New().Bytes() // can we use unencoded use bytes here or do we need .String()?
-			// key := make([]byte, len(o)+len(k)+1)
-			// copy(key, o)
-			// key[len(o)] = keySeperator
-			// copy(key[len(o)+1:], k)
-			// log.Debug().Msgf("created key: %s", string(key))
-
-			if err := wb.Set(
-				key,
-				msg.Data,
-				cb); err != nil {
-				log.Err(err).Msg("problem calling Set on WriteBatch")
-				if c.Opts.BadgerWriteMsgErr != nil {
-					c.Opts.BadgerWriteMsgErr(msg, err)
-				}
-			}
-		case <-c.closers.natsConsumers.HasBeenClosed():
+			c.processIngressMessage(wb, msg)
+		case <-natsConsumer.HasBeenClosed():
 			// The consumer has been asked to close.
 			// Flushing will be handled by the above defer wb.Close()
 			return
 		}
+	}
+}
+
+func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
+	fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
+	// decoded := RequeueMessageFromNATS(msg)
+	log.Debug().
+		Str("msg", string(fb.OriginalPayloadBytes())).
+		Msg("received a message")
+
+	// Build the key
+	// TODO(nickpoorman): Write benchmark to see which of these is faster
+	key := []byte(fmt.Sprintf("%s.%s", string(flatbuf.GetRootAsRequeueMessage(msg.Data, 0).OriginalSubject()), ksuid.New().String()))
+	// TODO(nickpoorman): This may be faster but I need to test it out
+	// o := fb.OriginalSubject()
+	// k := ksuid.New().Bytes() // can we use unencoded use bytes here or do we need .String()?
+	// key := make([]byte, len(o)+len(k)+1)
+	// copy(key, o)
+	// key[len(o)] = keySeperator
+	// copy(key[len(o)+1:], k)
+	// log.Debug().Msgf("created key: %s", string(key))
+
+	if err := wb.Set(
+		key,
+		msg.Data,
+		processIngressMessageCallback(msg)); err != nil {
+		log.Err(err).Msg("problem calling Set on WriteBatch")
+		if c.Opts.BadgerWriteMsgErr != nil {
+			c.Opts.BadgerWriteMsgErr(msg, err)
+		}
+	}
+}
+
+// A commit from batchedWriter will trigger a batch of callbacks,
+// one for each message.
+func processIngressMessageCallback(msg *nats.Msg) func(err error) {
+	return func(err error) {
+		fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
+		if err != nil {
+			log.Err(err).
+				Str("msg", string(fb.OriginalPayloadBytes())).
+				Msgf("problem committing message")
+		}
+		// ml, bl, err := c.sub.PendingLimits()
+		// if err != nil {
+		// 	log.Err(err).Msg("PendingLimits")
+		// }
+		log.Debug().
+			Str("msg", string(fb.OriginalPayloadBytes())).
+			// Int("pending-limits-msg", ml).
+			// Int("pending-limits-size", bl).
+			Str("Reply", msg.Reply).
+			Str("Subject", msg.Subject).
+			Msgf("committed message")
+
+		// Ack the message
+		if err := msg.Respond(nil); err != nil {
+			log.Err(err).
+				Str("msg", string(fb.OriginalPayloadBytes())).
+				Msgf("problem sending ACK for message")
+		}
+
 	}
 }
