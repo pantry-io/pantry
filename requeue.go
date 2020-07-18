@@ -530,7 +530,7 @@ func (c *Conn) initNatsProducers() {
 	// On some interval, look at messages that have been written to badger
 	// and see if any of them are ready to be sent.
 
-	// We want the ability to have multiple persistence queues.
+	// We will need to lookup the last key that was read so we know where to start.
 
 }
 
