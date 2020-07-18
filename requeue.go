@@ -471,7 +471,7 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 
 	// Build the key
 	meta := fb.Meta(nil)
-	persistenceQueue := string(meta.PersistenceQueue())
+	persistenceQueue := meta.PersistenceQueue()
 
 	delay := time.Now().Add(time.Duration(meta.Delay()))
 	entryKey, err := key.NewWithTime(c.persistenceQueuePrefix(persistenceQueue), delay)
@@ -530,7 +530,10 @@ func (c *Conn) initNatsProducers() {
 	// On some interval, look at messages that have been written to badger
 	// and see if any of them are ready to be sent.
 
-	// We will need to lookup the last key that was read so we know where to start.
+	// Lookup each of the queues we have on disk.
+
+	// We will need to lookup the last key that was read for each queue so we know where to start.
+	lastKey := "q.abc123" // TODO: Persist this to badger
 
 }
 
@@ -563,6 +566,9 @@ func (c *Conn) Range(seek, until key.Key, f func(key, value []byte) bool) error 
 	})
 }
 
-func (c *Conn) persistenceQueuePrefix(prefix string) string {
-	return DefaultPersistenceQueuePrefix + prefix
+func (c *Conn) persistenceQueuePrefix(prefix []byte) []byte {
+	q := make([]byte, 0, len(DefaultPersistenceQueuePrefix)+len(prefix))
+	q = append(q, DefaultPersistenceQueuePrefix...)
+	q = append(q, prefix...)
+	return q
 }
