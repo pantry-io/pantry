@@ -57,47 +57,49 @@ func (rcv *RequeueMeta) Table() flatbuffers.Table {
 }
 
 /// The number of times requeue should be attempted.
-func (rcv *RequeueMeta) Retries() int64 {
+func (rcv *RequeueMeta) Retries() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
-	return -1
+	return 0
 }
 
 /// The number of times requeue should be attempted.
-func (rcv *RequeueMeta) MutateRetries(n int64) bool {
-	return rcv._tab.MutateInt64Slot(4, n)
+func (rcv *RequeueMeta) MutateRetries(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
 }
 
 /// The TTL for when the msssage should expire. This is useful for ensuring
-/// messages are not retried after a certain time.
-func (rcv *RequeueMeta) Ttl() int64 {
+/// messages are not retried after a certain time. TTL must be expressed
+/// as the number of nanosecods to expire after the message has been committed.
+func (rcv *RequeueMeta) Ttl() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
-	return -1
+	return 0
 }
 
 /// The TTL for when the msssage should expire. This is useful for ensuring
-/// messages are not retried after a certain time.
-func (rcv *RequeueMeta) MutateTtl(n int64) bool {
-	return rcv._tab.MutateInt64Slot(6, n)
+/// messages are not retried after a certain time. TTL must be expressed
+/// as the number of nanosecods to expire after the message has been committed.
+func (rcv *RequeueMeta) MutateTtl(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
 }
 
 /// The delay before the message should be replayed in nanoseconds.
-func (rcv *RequeueMeta) Delay() int64 {
+func (rcv *RequeueMeta) Delay() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
-	return -1
+	return 0
 }
 
 /// The delay before the message should be replayed in nanoseconds.
-func (rcv *RequeueMeta) MutateDelay(n int64) bool {
-	return rcv._tab.MutateInt64Slot(8, n)
+func (rcv *RequeueMeta) MutateDelay(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(8, n)
 }
 
 /// Backoff strategy that will be used for determining the next delay should
@@ -118,20 +120,43 @@ func (rcv *RequeueMeta) MutateBackoffStrategy(n BackoffStrategy) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
 
+/// The persistence queue events will be stored in.
+/// This can be useful if you need multiple queues by priority.
+/// On the sever you can configure the priority certain queues 
+/// should have over other. This way you can ensure a given high volumn 
+/// queue does not starve out a low volumn queue.
+/// The default queue is "default" when one is not provided.
+func (rcv *RequeueMeta) PersistenceQueue() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+/// The persistence queue events will be stored in.
+/// This can be useful if you need multiple queues by priority.
+/// On the sever you can configure the priority certain queues 
+/// should have over other. This way you can ensure a given high volumn 
+/// queue does not starve out a low volumn queue.
+/// The default queue is "default" when one is not provided.
 func RequeueMetaStart(builder *flatbuffers.Builder) {
-	builder.StartObject(4)
+	builder.StartObject(5)
 }
-func RequeueMetaAddRetries(builder *flatbuffers.Builder, retries int64) {
-	builder.PrependInt64Slot(0, retries, -1)
+func RequeueMetaAddRetries(builder *flatbuffers.Builder, retries uint64) {
+	builder.PrependUint64Slot(0, retries, 0)
 }
-func RequeueMetaAddTtl(builder *flatbuffers.Builder, ttl int64) {
-	builder.PrependInt64Slot(1, ttl, -1)
+func RequeueMetaAddTtl(builder *flatbuffers.Builder, ttl uint64) {
+	builder.PrependUint64Slot(1, ttl, 0)
 }
-func RequeueMetaAddDelay(builder *flatbuffers.Builder, delay int64) {
-	builder.PrependInt64Slot(2, delay, -1)
+func RequeueMetaAddDelay(builder *flatbuffers.Builder, delay uint64) {
+	builder.PrependUint64Slot(2, delay, 0)
 }
 func RequeueMetaAddBackoffStrategy(builder *flatbuffers.Builder, backoffStrategy BackoffStrategy) {
 	builder.PrependInt8Slot(3, int8(backoffStrategy), 0)
+}
+func RequeueMetaAddPersistenceQueue(builder *flatbuffers.Builder, persistenceQueue flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(persistenceQueue), 0)
 }
 func RequeueMetaEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -84,15 +84,23 @@ func (bw *batchedWriter) Set(k, v []byte, cb WriteBatchCommitCB) error {
 	if !bw.flushKicked {
 		bw.flushKicked = true
 		go func() {
-			// select {
 			<-time.After(bw.d)
 			bw.flush(false)
-			// case <-bw.quit:
-			// 	// ticker.Stop()
-			// 	bw.flush(true)
-			// 	close(bw.done)
-			// 	return
-			// }
+		}()
+	}
+	return err
+}
+
+func (bw *batchedWriter) SetEntry(e *badger.Entry, cb WriteBatchCommitCB) error {
+	bw.mu.Lock()
+	defer bw.mu.Unlock()
+	// Create a timeout
+	err := bw.wb.SetEntry(e, cb)
+	if !bw.flushKicked {
+		bw.flushKicked = true
+		go func() {
+			<-time.After(bw.d)
+			bw.flush(false)
 		}()
 	}
 	return err

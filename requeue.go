@@ -1,8 +1,8 @@
 package requeue
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -11,9 +11,9 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
+	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/segmentio/ksuid"
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/dgraph-io/badger/v2/y"
@@ -45,6 +45,8 @@ const (
 	keySeperator byte = '.'
 
 	DefaultNumConcurrentBatchTransactions = 4
+
+	DefaultPersistenceQueuePrefix = "q."
 )
 
 func Connect(options ...Option) (*Conn, error) {
@@ -178,8 +180,14 @@ func (o Options) Connect() (*Conn, error) {
 		return nil, err
 	}
 
-	// Start consumers to process messages
+	// Start consumers to process messages.
 	if err := rc.initNatsConsumers(); err != nil {
+		rc.Close()
+		return nil, err
+	}
+
+	// Start up the service responsible for requeuing messages.
+	if err := rc.initNatsProducers(); err != nil {
 		rc.Close()
 		return nil, err
 	}
@@ -462,20 +470,22 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 		Msg("received a message")
 
 	// Build the key
-	// TODO(nickpoorman): Write benchmark to see which of these is faster
-	key := []byte(fmt.Sprintf("%s.%s", string(flatbuf.GetRootAsRequeueMessage(msg.Data, 0).OriginalSubject()), ksuid.New().String()))
-	// TODO(nickpoorman): This may be faster but I need to test it out
-	// o := fb.OriginalSubject()
-	// k := ksuid.New().Bytes() // can we use unencoded use bytes here or do we need .String()?
-	// key := make([]byte, len(o)+len(k)+1)
-	// copy(key, o)
-	// key[len(o)] = keySeperator
-	// copy(key[len(o)+1:], k)
-	// log.Debug().Msgf("created key: %s", string(key))
+	meta := fb.Meta(nil)
+	persistenceQueue := string(meta.PersistenceQueue())
 
-	if err := wb.Set(
-		key,
-		msg.Data,
+	delay := time.Now().Add(time.Duration(meta.Delay()))
+	entryKey, err := key.NewWithTime(c.persistenceQueuePrefix(persistenceQueue), delay)
+	if err != nil {
+		log.Err(err).Msg("problem calling Set on WriteBatch")
+		if c.Opts.BadgerWriteMsgErr != nil {
+			c.Opts.BadgerWriteMsgErr(msg, err)
+		}
+		return
+	}
+	ttl := time.Duration(meta.Ttl())
+
+	if err := wb.SetEntry(
+		badger.NewEntry(entryKey.Bytes(), msg.Data).WithTTL(ttl),
 		processIngressMessageCallback(msg)); err != nil {
 		log.Err(err).Msg("problem calling Set on WriteBatch")
 		if c.Opts.BadgerWriteMsgErr != nil {
@@ -514,4 +524,45 @@ func processIngressMessageCallback(msg *nats.Msg) func(err error) {
 		}
 
 	}
+}
+
+func (c *Conn) initNatsProducers() {
+	// On some interval, look at messages that have been written to badger
+	// and see if any of them are ready to be sent.
+
+	// We want the ability to have multiple persistence queues.
+
+}
+
+// Range performs a range query against the storage. It calls f sequentially for
+// each key and value present in the store. If f returns false, range stops the
+// iteration. The implementation must guarantee that the keys are
+// lexigraphically sorted.
+func (c *Conn) Range(seek, until key.Key, f func(key, value []byte) bool) error {
+	return c.badgerDB.View(func(tx *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		opts.Prefix = key.PrefixOf(seek, until)
+		it := tx.NewIterator(opts)
+		defer it.Close()
+
+		// Seek the prefix and check the key so we can quickly exit the iteration.
+		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
+			item := it.Item()
+			key := item.Key()
+			if bytes.Compare(key, until.Bytes()) > 0 {
+				return nil // Stop if we're reached the end
+			}
+
+			// Fetch the value
+			if value, err := item.ValueCopy(nil); err != nil && f(key, value) {
+				return nil
+			}
+		}
+		return nil
+	})
+}
+
+func (c *Conn) persistenceQueuePrefix(prefix string) string {
+	return DefaultPersistenceQueuePrefix + prefix
 }
