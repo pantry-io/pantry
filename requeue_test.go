@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -55,7 +57,7 @@ func Test_RequeueConnect(t *testing.T) {
 
 	clientURL := s.ClientURL()
 	// clientURL := "localhost:4222"
-	log.Info().Msgf("running nats on: %s", clientURL)
+	t.Logf("running nats on: %s", clientURL)
 
 	// NATS connect Options.
 	natsOpts := requeue.GetDefaultOptions().NatsOptions
@@ -81,28 +83,37 @@ func Test_RequeueConnect(t *testing.T) {
 	nc, err := nats.Connect(
 		clientURL,
 		nats.DisconnectErrHandler(func(con *nats.Conn, err error) {
-			log.Err(err).Msg("nats-producer: DisconnectErrHandler")
+			t.Error(fmt.Errorf("nats-producer: DisconnectErrHandler: %w", err))
 		}),
 		nats.ReconnectHandler(func(con *nats.Conn) {
-			log.Info().Msgf("nats-producer: Got reconnected to %s!", con.ConnectedUrl())
+			t.Logf("nats-producer: Got reconnected to %s!", con.ConnectedUrl())
 		}),
 		nats.ClosedHandler(func(con *nats.Conn) {
-			log.Info().Msg("nats-producer: ClosedHandler")
+			t.Log("nats-producer: ClosedHandler")
 		}),
 		nats.ErrorHandler(func(con *nats.Conn, sub *nats.Subscription, err error) {
-			log.Err(err).Msgf("nats-producer: ErrorHandler: Got err: conn=%s sub=%s err=%v", con.Opts.Name, sub.Subject, err)
+			t.Errorf("nats-producer: ErrorHandler: Got err: conn=%s sub=%s err=%w", con.Opts.Name, sub.Subject, err)
 		}),
 	)
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
 	}
 
-	total := 1000000
+	total := 100
 	pending := int64(total)
-
 	group, _ := errgroup.WithContext(context.Background())
-
 	ch := make(chan int)
+
+	var republishedWG sync.WaitGroup
+	republishedWG.Add(total)
+
+	originalSubject := "foo.bar.baz"
+	_, err = nc.Subscribe(originalSubject, func(msg *nats.Msg) {
+		t.Logf("got replayed message: %s", string(msg.Data))
+		republishedWG.Done()
+	})
+	assert.Nil(t, err)
+
 	go func() {
 		// Generate all our events
 		for i := 0; i < total; i++ {
@@ -119,10 +130,10 @@ func Test_RequeueConnect(t *testing.T) {
 					err := func(i int) error {
 						defer func() {
 							left := atomic.AddInt64(&pending, -1)
-							log.Debug().Msgf("number left: %d", left)
+							t.Logf("number left: %d", left)
 						}()
 
-						msg, err := requeue.RetryRequest(nc, subject, buildPayload(i), 15*time.Second, 100000)
+						msg, err := requeue.RetryRequest(nc, subject, buildPayload(i, originalSubject), 15*time.Second, 100000)
 						if err != nil {
 							if err == requeue.RequeueRequestRetriesExceededError {
 								return err
@@ -153,13 +164,11 @@ func Test_RequeueConnect(t *testing.T) {
 	}
 
 	if err := group.Wait(); err != nil {
-		log.Fatal().Err(err).Send()
-		os.Exit(1)
+		t.Fatal(err)
 	}
 
-	log.Info().Int64("pending", pending).Msg("left terminated")
-
-	cancel()
+	// log.Info().Int64("pending", pending).Msg("left terminated")
+	t.Logf("pending: %d", pending)
 
 	// TODO: Verify the events were written to disk
 
@@ -169,14 +178,19 @@ func Test_RequeueConnect(t *testing.T) {
 	// 3. Spin up a consumer on the original subject
 	// 4. Verify we get the requeued messages.
 
+	// Wait for all the messages to have been republished
+	republishedWG.Wait()
+
+	cancel()
+
 	<-rc.HasBeenClosed()
 
 	log.Info().Msg("right terminated.")
 }
 
-func buildPayload(i int) []byte {
+func buildPayload(i int, originalSubject string) []byte {
 	msg := requeue.DefaultRequeueMessage()
-	msg.OriginalSubject = "foo.bar.baz"
+	msg.OriginalSubject = originalSubject
 	msg.OriginalPayload = []byte(fmt.Sprintf("my awesome payload %d", i))
 	msg.BackoffStrategy = requeue.BackoffStrategy_Exponential
 	msg.Delay = uint64(1 * time.Nanosecond)

@@ -11,12 +11,14 @@ import (
 	"github.com/segmentio/ksuid"
 )
 
+type Checkpoint []byte
+
 type Queue struct {
 	db *badger.DB
 
 	mu         sync.RWMutex
 	name       string
-	checkpoint []byte
+	checkpoint Checkpoint
 }
 
 func createQueue(db *badger.DB, name string) (*Queue, error) {
@@ -51,7 +53,7 @@ func (q *Queue) Name() string {
 }
 
 // UpdateCheckpoint will update the checkpoint for this queue.
-func (q *Queue) UpdateCheckpoint(checkpoint []byte) error {
+func (q *Queue) UpdateCheckpoint(checkpoint Checkpoint) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -64,14 +66,14 @@ func (q *Queue) UpdateCheckpoint(checkpoint []byte) error {
 
 // setCheckpoint will set the checkpoint in memory.
 // Should be called with lock acquired.
-func (q *Queue) setCheckpoint(checkpoint []byte) {
+func (q *Queue) setCheckpoint(checkpoint Checkpoint) {
 	// Update it in memory.
 	q.checkpoint = checkpoint
 }
 
 // saveCheckpoint will save the checkpoint on disk.
 // Should be called with lock acquired.
-func (q *Queue) saveCheckpoint(checkpoint []byte) error {
+func (q *Queue) saveCheckpoint(checkpoint Checkpoint) error {
 	// Save it to disk.
 	return q.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(
@@ -162,11 +164,16 @@ func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) error {
 
 // ReadFromCheckpoint should begin reading in all the events from the checkpoint
 // up until the provided Time.
-func (q *Queue) ReadFromCheckpoint(until time.Time, f func(QueueItem) bool) error {
+func (q *Queue) ReadFromCheckpoint(until time.Time, f func(QueueItem) bool) (Checkpoint, error) {
 	uid, err := ksuid.NewRandomWithTime(until)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	untilQK := NewQueueKeyForMessage(q.name, uid.String())
-	return q.Range(ParseQueueKey(q.checkpoint), untilQK, f)
+	q.mu.RLock()
+	name := q.name
+	checkpoint := q.checkpoint
+	q.mu.RUnlock()
+
+	untilQK := NewQueueKeyForMessage(name, uid.String())
+	return checkpoint, q.Range(ParseQueueKey(checkpoint), untilQK, f)
 }

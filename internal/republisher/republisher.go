@@ -46,6 +46,7 @@ func (rp *Republisher) loop(interval time.Duration) {
 			rp.republish()
 		case <-rp.quit:
 			ticker.Stop()
+			// TODO: Cancel any thats currently trying to republish but hasn't sent the Request yet.
 			close(rp.done)
 			return
 		}
@@ -55,8 +56,16 @@ func (rp *Republisher) loop(interval time.Duration) {
 // republish check all the queues for new messages
 // that are ready to be sent and trigger a publish for any that are.
 func (rp *Republisher) republish() {
+	log.Debug().Msg("republisher triggered.")
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
+
+	qs := rp.qManager.Queues()
+
+	if len(qs) == 0 {
+		// If there are no queues then there is nothing for us to do.
+		return
+	}
 
 	// TODO: Rework this so that this output chan has been prioritized based on
 	// queue.
@@ -66,10 +75,20 @@ func (rp *Republisher) republish() {
 	// 	close(ch)
 	// }()
 
+	var wg sync.WaitGroup
+	wg.Add(len(qs))
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
 	now := time.Now() // Read up until now
-	for _, que := range rp.qManager.Queues() {
+	for _, que := range qs {
 		go func(q *queue.Queue) {
-			err := q.ReadFromCheckpoint(now, func(qi queue.QueueItem) bool {
+			defer wg.Done()
+
+			checkpoint, err := q.ReadFromCheckpoint(now, func(qi queue.QueueItem) bool {
 				// TODO(nickpoorman): This is blocking the transaction from
 				// being able to close. If this becomes an issue,
 				// may need to buffer these up.
@@ -77,7 +96,11 @@ func (rp *Republisher) republish() {
 				return true
 			})
 			if err != nil {
-				log.Err(err).Msg("ReadFromCheckpoint error")
+				log.Err(err).Msg("called to ReadFromCheckpoint failed")
+			}
+			// Update the checkpoint
+			if err := q.UpdateCheckpoint(checkpoint); err != nil {
+				log.Err(err).Msg("call to UpdateCheckpoint failed")
 			}
 		}(que)
 	}
@@ -97,7 +120,7 @@ func (rp *Republisher) republish() {
 		subj := string(fb.OriginalSubject())
 		data := fb.OriginalPayloadBytes()
 
-		_, err := rp.nc.Request(subj, data, 15*time.Second) // TODO: Make this timeout configurable.
+		_, err := rp.nc.Request(subj, data, DefaultACKTimeout) // TODO: Make this timeout configurable.
 		if err != nil {
 			log.Err(err).
 				Str("msg", string(fb.OriginalPayloadBytes())).

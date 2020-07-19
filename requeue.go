@@ -10,7 +10,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
-	"github.com/nickpoorman/nats-requeue/internal/queues"
+	"github.com/nickpoorman/nats-requeue/internal/queue"
 	"github.com/nickpoorman/nats-requeue/internal/republisher"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -46,6 +46,8 @@ const (
 	keySeperator byte = '.'
 
 	DefaultNumConcurrentBatchTransactions = 4
+
+	DefaultRepublisherInterval = 15 * time.Second
 )
 
 func Connect(options ...Option) (*Conn, error) {
@@ -126,11 +128,21 @@ func BadgerDataPath(path string) Option {
 	}
 }
 
-// BadgerWriteErr sets the callback to be triggered when there is an error
+// BadgerWriteMsgErr sets the callback to be triggered when there is an error
 // writing a message to Badger.
 func BadgerWriteMsgErr(cb func(*nats.Msg, error)) Option {
 	return func(o *Options) error {
 		o.BadgerWriteMsgErr = cb
+		return nil
+	}
+}
+
+// RepublisherInterval sets interval in which to trigger the republisher.
+// This is the interval in which requeue will look for messages that are ready to be republished.
+// The smaller this number is, the greater the number of possible disk reads.
+func RepublisherInterval(interval time.Duration) Option {
+	return func(o *Options) error {
+		o.RepublisherInterval = interval
 		return nil
 	}
 }
@@ -149,6 +161,9 @@ type Options struct {
 	// Badger
 	BadgerDataPath    string
 	BadgerWriteMsgErr func(*nats.Msg, error)
+
+	// Republisher
+	RepublisherInterval time.Duration
 }
 
 func GetDefaultOptions() Options {
@@ -161,6 +176,7 @@ func GetDefaultOptions() Options {
 			nats.Name(DefaultNatsClientName),
 			nats.RetryOnFailedConnect(DefaultNatsRetryOnFailure),
 		},
+		RepublisherInterval: DefaultRepublisherInterval,
 	}
 }
 
@@ -234,7 +250,7 @@ type Conn struct {
 	badgerDB *badger.DB
 
 	// Queues
-	qManager    *queues.Manager
+	qManager    *queue.Manager
 	republisher *republisher.Republisher
 
 	closeOnce sync.Once
@@ -488,7 +504,7 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 	}
 }
 
-func (c *Conn) newMessageQueueKey(msg *nats.Msg, fb *flatbuf.RequeueMessage) (queues.QueueKey, error) {
+func (c *Conn) newMessageQueueKey(msg *nats.Msg, fb *flatbuf.RequeueMessage) (queue.QueueKey, error) {
 	delay := time.Now().Add(time.Duration(fb.Delay()))
 	kuid, err := ksuid.NewRandomWithTime(delay)
 	if err != nil {
@@ -496,12 +512,12 @@ func (c *Conn) newMessageQueueKey(msg *nats.Msg, fb *flatbuf.RequeueMessage) (qu
 		if c.Opts.BadgerWriteMsgErr != nil {
 			c.Opts.BadgerWriteMsgErr(msg, err)
 		}
-		return queues.QueueKey{}, err
+		return queue.QueueKey{}, err
 	}
-	qk := queues.QueueKey{
-		Namespace: queues.QueuesNamespace,
+	qk := queue.QueueKey{
+		Namespace: queue.QueuesNamespace,
 		Name:      string(fb.PersistenceQueue()),
-		Bucket:    queues.MessagesBucket,
+		Bucket:    queue.MessagesBucket,
 		Property:  kuid.String(),
 	}
 	return qk, nil
@@ -543,14 +559,14 @@ func (c *Conn) initNatsProducers() error {
 	defer c.mu.Unlock()
 
 	// Load up all the queues we have on disk and manage them.
-	manager, err := queues.NewManager(c.badgerDB)
+	manager, err := queue.NewManager(c.badgerDB)
 	if err != nil {
 		return err
 	}
 	c.qManager = manager
 
 	// Create a republisher
-	c.republisher = republisher.New(c.nc, c.badgerDB, manager, 15*time.Second)
+	c.republisher = republisher.New(c.nc, c.badgerDB, manager, c.Opts.RepublisherInterval)
 
 	// On some interval, look at messages that have been written to badger
 	// and see if any of them are ready to be sent.
