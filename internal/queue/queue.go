@@ -24,6 +24,7 @@ type Queue struct {
 func createQueue(db *badger.DB, name string) (*Queue, error) {
 	// Create the queue and persist it.
 	q := &Queue{
+		db:         db,
 		name:       name,
 		checkpoint: FirstMessage(name).Bytes(), // set to the min possible value
 	}
@@ -88,8 +89,6 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 	defer q.mu.Unlock()
 
 	switch qk.Property {
-	case NameProperty:
-		q.name = string(v)
 	case CheckpointProperty: // queues.high.checkpoint
 		q.checkpoint = v
 	default:
@@ -98,6 +97,10 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 		return err
 	}
 	return nil
+}
+
+func (q *Queue) SetName(name string) {
+	q.name = name
 }
 
 type QueueItem struct {

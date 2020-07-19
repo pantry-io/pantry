@@ -20,37 +20,57 @@ type Republisher struct {
 	qManager *queue.Manager
 	nc       *nats.Conn
 
+	// The publish interval
+	pubInterval time.Duration
+
 	mu sync.RWMutex
 
 	quit chan struct{}
 	done chan struct{}
 }
 
-func New(nc *nats.Conn, db *badger.DB, qManager *queue.Manager, interval time.Duration) *Republisher {
+func New(nc *nats.Conn, db *badger.DB, qManager *queue.Manager, pubInterval time.Duration) *Republisher {
 	rq := &Republisher{
-		db:       db,
-		qManager: qManager,
+		db:          db,
+		qManager:    qManager,
+		pubInterval: pubInterval,
+		quit:        make(chan struct{}),
+		done:        make(chan struct{}),
 	}
-	go rq.loop(interval)
+	go rq.initBackgroundTasks()
 
 	return rq
 }
 
-// loop will on the interval provided call republish until this
-// Republisher is told to stop.
-func (rp *Republisher) loop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	for {
-		select {
-		case <-ticker.C:
-			rp.republish()
-		case <-rp.quit:
-			ticker.Stop()
-			// TODO: Cancel any thats currently trying to republish but hasn't sent the Request yet.
-			close(rp.done)
-			return
+func (rp *Republisher) initBackgroundTasks() {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		wg.Wait()
+		close(rp.done)
+	}()
+
+	// republish loop
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(rp.pubInterval)
+		for {
+			select {
+			case <-ticker.C:
+				rp.republish()
+			case <-rp.quit:
+				ticker.Stop()
+				// TODO: Cancel anything thats currently trying to republish but
+				// hasn't sent the Request yet.
+				return
+			}
 		}
-	}
+	}()
+}
+
+func (rp *Republisher) Close() {
+	close(rp.quit)
+	<-rp.done
 }
 
 // republish check all the queues for new messages
@@ -67,14 +87,7 @@ func (rp *Republisher) republish() {
 		return
 	}
 
-	// TODO: Rework this so that this output chan has been prioritized based on
-	// queue.
-	// TODO: Close this chan when we are done with this function
 	ch := make(chan queue.QueueItem)
-	// defer func(){
-	// 	close(ch)
-	// }()
-
 	var wg sync.WaitGroup
 	wg.Add(len(qs))
 
@@ -87,7 +100,7 @@ func (rp *Republisher) republish() {
 	for _, que := range qs {
 		go func(q *queue.Queue) {
 			defer wg.Done()
-
+			// TOOD: If rp.quit is closed, we should stop this early and checkpoint where we're at.
 			checkpoint, err := q.ReadFromCheckpoint(now, func(qi queue.QueueItem) bool {
 				// TODO(nickpoorman): This is blocking the transaction from
 				// being able to close. If this becomes an issue,

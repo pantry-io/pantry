@@ -234,6 +234,7 @@ type closers struct {
 	nats          *y.Closer
 	natsConsumers *y.Closer
 	badger        *y.Closer
+	natsProducers *y.Closer
 }
 
 type Conn struct {
@@ -267,6 +268,7 @@ func NewConn(o Options) *Conn {
 			nats:          y.NewCloser(0),
 			natsConsumers: y.NewCloser(0),
 			badger:        y.NewCloser(0),
+			natsProducers: y.NewCloser(0),
 		},
 	}
 }
@@ -274,6 +276,8 @@ func NewConn(o Options) *Conn {
 func (c *Conn) Close() {
 	c.closeOnce.Do(func() {
 		log.Info().Msg("requeue: closing...")
+		// Stop the nats producers from sending out messages on nats.
+		c.closers.natsProducers.SignalAndWait()
 		// Stop nats
 		c.closers.nats.SignalAndWait()
 		// Stop processing nats messages
@@ -494,6 +498,15 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 		return
 	}
 
+	// Before we write the message, we need to create the state for the
+	// queue if it doesn't yet exist.
+	stateQK := queue.NewQueueKeyForState(qk.Name, "")
+	if err := c.qManager.UpsertQueueState(stateQK); err != nil {
+		log.Err(err).
+			Interface("stateQueueKey", stateQK).
+			Msg("problem upserting queue state for ingress message")
+	}
+
 	if err := wb.SetEntry(
 		badger.NewEntry(qk.Bytes(), msg.Data).WithTTL(time.Duration(fb.Ttl())),
 		c.processIngressMessageCallback(msg)); err != nil {
@@ -567,6 +580,26 @@ func (c *Conn) initNatsProducers() error {
 
 	// Create a republisher
 	c.republisher = republisher.New(c.nc, c.badgerDB, manager, c.Opts.RepublisherInterval)
+
+	c.closers.natsProducers.AddRunning(1)
+	go func() {
+		defer c.closers.natsProducers.Done()
+		<-c.closers.natsProducers.HasBeenClosed()
+
+		log.Debug().Msg("closing nats producers...")
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		// close the republisher
+		if c.republisher != nil {
+			c.republisher.Close()
+		}
+
+		// close the queue manager
+		if c.qManager != nil {
+			c.qManager.Close()
+		}
+	}()
 
 	// On some interval, look at messages that have been written to badger
 	// and see if any of them are ready to be sent.

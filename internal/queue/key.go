@@ -36,7 +36,6 @@ const MessagesBucket = "_m"
 
 const StateBucket = "_s"
 const CheckpointProperty = "checkpoint"
-const NameProperty = "name"
 
 type QueueKey struct {
 	Namespace string
