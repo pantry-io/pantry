@@ -35,7 +35,7 @@ func (rp *Republisher) loop(interval time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			rp.republish()
+			// rp.republish()
 		case <-rp.quit:
 			ticker.Stop()
 			close(rp.done)
@@ -46,12 +46,12 @@ func (rp *Republisher) loop(interval time.Duration) {
 
 // republish check all the queues for new messages
 // that are ready to be sent and trigger a publish for any that are.
-func (rp *Republisher) republish() {
-	rp.mu.Lock()
-	defer rp.mu.Unlock()
+// func (rp *Republisher) republish() {
+// 	rp.mu.Lock()
+// 	defer rp.mu.Unlock()
 
-	queues := rp.qManager.Queues()
-	for _, q := range queues {
-		q.ReadFromCheckpoint()
-	}
-}
+// 	queues := rp.qManager.Queues()
+// 	for _, q := range queues {
+// 		q.ReadFromCheckpoint()
+// 	}
+// }

@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
+	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
-	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/rs/zerolog/log"
+	"github.com/segmentio/ksuid"
 )
 
 type Queue struct {
@@ -22,7 +23,7 @@ func createQueue(db *badger.DB, name string) (*Queue, error) {
 	// Create the queue and persist it.
 	q := &Queue{
 		name:       name,
-		checkpoint: key.First([]byte(name)), // set to the min possible value
+		checkpoint: First([]byte(name)), // set to the min possible value
 	}
 
 	// Save the queue state to disk
@@ -101,11 +102,11 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 // each key and value present in the store. If f returns false, range stops the
 // iteration. The implementation must guarantee that the keys are
 // lexigraphically sorted.
-func (q *Queue) Range(seek, until key.Key, f func(key, value []byte) bool) error {
+func (q *Queue) Range(seek, until RawMessageQueueKey, f func(key, value []byte) bool) error {
 	return q.db.View(func(tx *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
-		opts.Prefix = key.PrefixOf(seek, until)
+		opts.Prefix = PrefixOf(seek, until)
 		it := tx.NewIterator(opts)
 		defer it.Close()
 
@@ -126,15 +127,17 @@ func (q *Queue) Range(seek, until key.Key, f func(key, value []byte) bool) error
 	})
 }
 
-// func (q *Queue) ReadFromCheckpoint(until time.Time) {
-// 	entryKey, err := key.NewWithTime(c.persistenceQueuePrefix(persistenceQueue), delay)
-// 	if err != nil {
-// 		log.Err(err).Msg("problem creating a new key")
-// 		if c.Opts.BadgerWriteMsgErr != nil {
-// 			c.Opts.BadgerWriteMsgErr(msg, err)
-// 		}
-// 		return
-// 	}
+// ReadFromCheckpoint should begin reading in all the events from the checkpoint
+// up until the provided Time.
+func (q *Queue) ReadFromCheckpoint(until time.Time) error {
+	uid, err := ksuid.NewRandomWithTime(until)
+	if err != nil {
+		return err
+	}
 
-// 	q.Range(key.FromBytes(q.checkpoint))
-// }
+	NewQueueKeyForMessage(q.name, uid.String())
+
+	// q.Range(key.FromBytes(q.checkpoint))
+
+	return nil
+}

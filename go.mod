@@ -11,7 +11,5 @@ require (
 	github.com/nats-io/nats.go v1.10.1-0.20200708152344-e08031f0cc30
 	github.com/rs/zerolog v1.19.0
 	github.com/segmentio/ksuid v1.0.3
-	github.com/twmb/murmur3 v1.1.3
-	golang.org/x/sync v0.0.0-20190423024810-112230192c58
-
+	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
 )

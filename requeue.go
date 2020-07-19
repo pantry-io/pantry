@@ -549,7 +549,7 @@ func (c *Conn) initNatsProducers() error {
 	}
 	c.qManager = manager
 
-	// Create a requeuer
+	// Create a republisher
 
 	// On some interval, look at messages that have been written to badger
 	// and see if any of them are ready to be sent.

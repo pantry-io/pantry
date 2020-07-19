@@ -84,7 +84,7 @@ func buildPayload(i int) []byte {
 	msg.OriginalSubject = "foo.bar.baz"
 	msg.OriginalPayload = []byte(fmt.Sprintf("my awesome payload %d", i))
 	msg.Meta.BackoffStrategy = requeue.BackoffStrategy_Exponential
-	msg.Meta.Delay = 1 * time.Second.Nanoseconds()
+	msg.Meta.Delay = uint64(1 * time.Nanosecond)
 	msg.Meta.Retries = 1
 	return msg.Bytes()
 }

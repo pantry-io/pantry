@@ -27,14 +27,14 @@ const (
 //  + Backoff strategy. i.e. fixed interval or exponential
 type RequeueMeta struct {
 	// The number of times requeue should be attempted.
-	Retries int64
+	Retries uint64
 
 	// The TTL for when the msssage should expire. This is useful for ensuring
 	// messages are not retried after a certain time.
-	TTL int64
+	TTL uint64
 
 	// The delay before the message should be replayed in nanoseconds.
-	Delay int64
+	Delay uint64
 
 	// Backoff strategy that will be used for determining the next delay should
 	// the message fail to be acknowledged on replay. i.e. fixed interval or
@@ -44,9 +44,9 @@ type RequeueMeta struct {
 
 func DefaultRequeueMeta() RequeueMeta {
 	return RequeueMeta{
-		Retries:         -1,
-		TTL:             -1,
-		Delay:           -1,
+		Retries:         0,
+		TTL:             0,
+		Delay:           0,
 		BackoffStrategy: BackoffStrategy_Undefined,
 	}
 }

@@ -34,10 +34,10 @@ func (m *Manager) loadFromDisk() error {
 	return m.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		prefix := QueueKey{
+		prefix := []byte(QueueKey{
 			Namespace: QueuesNamespace,
 			Bucket:    StateBucket,
-		}.BucketPath() + "."
+		}.BucketPath() + ".")
 
 		q := &Queue{}
 
