@@ -1,7 +1,6 @@
 package requeue
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"os/signal"
@@ -11,9 +10,10 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
-	"github.com/nickpoorman/nats-requeue/internal/key"
+	"github.com/nickpoorman/nats-requeue/internal/queues"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/segmentio/ksuid"
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/dgraph-io/badger/v2/y"
@@ -45,8 +45,6 @@ const (
 	keySeperator byte = '.'
 
 	DefaultNumConcurrentBatchTransactions = 4
-
-	DefaultPersistenceQueuePrefix = "q."
 )
 
 func Connect(options ...Option) (*Conn, error) {
@@ -233,6 +231,9 @@ type Conn struct {
 
 	// Badger
 	badgerDB *badger.DB
+
+	// Queues
+	qManager *queues.Manager
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -469,34 +470,46 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 		Str("msg", string(fb.OriginalPayloadBytes())).
 		Msg("received a message")
 
-	// Build the key
 	meta := fb.Meta(nil)
-	persistenceQueue := meta.PersistenceQueue()
 
-	delay := time.Now().Add(time.Duration(meta.Delay()))
-	entryKey, err := key.NewWithTime(c.persistenceQueuePrefix(persistenceQueue), delay)
+	// Build the key
+	qk, err := c.newMessageQueueKey(msg, meta)
 	if err != nil {
-		log.Err(err).Msg("problem calling Set on WriteBatch")
-		if c.Opts.BadgerWriteMsgErr != nil {
-			c.Opts.BadgerWriteMsgErr(msg, err)
-		}
 		return
 	}
-	ttl := time.Duration(meta.Ttl())
 
 	if err := wb.SetEntry(
-		badger.NewEntry(entryKey.Bytes(), msg.Data).WithTTL(ttl),
-		processIngressMessageCallback(msg)); err != nil {
-		log.Err(err).Msg("problem calling Set on WriteBatch")
+		badger.NewEntry(qk.Bytes(), msg.Data).WithTTL(time.Duration(meta.Ttl())),
+		c.processIngressMessageCallback(msg)); err != nil {
+		log.Err(err).Msg("problem calling SetEntry on WriteBatch")
 		if c.Opts.BadgerWriteMsgErr != nil {
 			c.Opts.BadgerWriteMsgErr(msg, err)
 		}
 	}
 }
 
+func (c *Conn) newMessageQueueKey(msg *nats.Msg, meta *flatbuf.RequeueMeta) (queues.QueueKey, error) {
+	delay := time.Now().Add(time.Duration(meta.Delay()))
+	kuid, err := ksuid.NewRandomWithTime(delay)
+	if err != nil {
+		log.Err(err).Msg("problem creating a new key")
+		if c.Opts.BadgerWriteMsgErr != nil {
+			c.Opts.BadgerWriteMsgErr(msg, err)
+		}
+		return queues.QueueKey{}, err
+	}
+	qk := queues.QueueKey{
+		Namespace: queues.QueuesNamespace,
+		Name:      string(meta.PersistenceQueue()),
+		Bucket:    queues.MessagesBucket,
+		Property:  kuid.String(),
+	}
+	return qk, nil
+}
+
 // A commit from batchedWriter will trigger a batch of callbacks,
 // one for each message.
-func processIngressMessageCallback(msg *nats.Msg) func(err error) {
+func (c *Conn) processIngressMessageCallback(msg *nats.Msg) func(err error) {
 	return func(err error) {
 		fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
 		if err != nil {
@@ -522,53 +535,54 @@ func processIngressMessageCallback(msg *nats.Msg) func(err error) {
 				Str("msg", string(fb.OriginalPayloadBytes())).
 				Msgf("problem sending ACK for message")
 		}
-
 	}
 }
 
-func (c *Conn) initNatsProducers() {
+func (c *Conn) initNatsProducers() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Load up all the queues we have on disk and manage them.
+	manager, err := queues.NewManager(c.badgerDB)
+	if err != nil {
+		return err
+	}
+	c.qManager = manager
+
+	// Create a requeuer
+
 	// On some interval, look at messages that have been written to badger
 	// and see if any of them are ready to be sent.
 
-	// Lookup each of the queues we have on disk.
-
 	// We will need to lookup the last key that was read for each queue so we know where to start.
-	lastKey := "q.abc123" // TODO: Persist this to badger
-
+	return nil
 }
 
-// Range performs a range query against the storage. It calls f sequentially for
-// each key and value present in the store. If f returns false, range stops the
-// iteration. The implementation must guarantee that the keys are
-// lexigraphically sorted.
-func (c *Conn) Range(seek, until key.Key, f func(key, value []byte) bool) error {
-	return c.badgerDB.View(func(tx *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		opts.Prefix = key.PrefixOf(seek, until)
-		it := tx.NewIterator(opts)
-		defer it.Close()
+// // Range performs a range query against the storage. It calls f sequentially for
+// // each key and value present in the store. If f returns false, range stops the
+// // iteration. The implementation must guarantee that the keys are
+// // lexigraphically sorted.
+// func (c *Conn) Range(seek, until key.Key, f func(key, value []byte) bool) error {
+// 	return c.badgerDB.View(func(tx *badger.Txn) error {
+// 		opts := badger.DefaultIteratorOptions
+// 		opts.PrefetchValues = false
+// 		opts.Prefix = key.PrefixOf(seek, until)
+// 		it := tx.NewIterator(opts)
+// 		defer it.Close()
 
-		// Seek the prefix and check the key so we can quickly exit the iteration.
-		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
-			item := it.Item()
-			key := item.Key()
-			if bytes.Compare(key, until.Bytes()) > 0 {
-				return nil // Stop if we're reached the end
-			}
+// 		// Seek the prefix and check the key so we can quickly exit the iteration.
+// 		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
+// 			item := it.Item()
+// 			key := item.Key()
+// 			if bytes.Compare(key, until.Bytes()) > 0 {
+// 				return nil // Stop if we're reached the end
+// 			}
 
-			// Fetch the value
-			if value, err := item.ValueCopy(nil); err != nil && f(key, value) {
-				return nil
-			}
-		}
-		return nil
-	})
-}
-
-func (c *Conn) persistenceQueuePrefix(prefix []byte) []byte {
-	q := make([]byte, 0, len(DefaultPersistenceQueuePrefix)+len(prefix))
-	q = append(q, DefaultPersistenceQueuePrefix...)
-	q = append(q, prefix...)
-	return q
-}
+// 			// Fetch the value
+// 			if value, err := item.ValueCopy(nil); err != nil && f(key, value) {
+// 				return nil
+// 			}
+// 		}
+// 		return nil
+// 	})
+// }
