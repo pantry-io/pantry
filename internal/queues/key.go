@@ -3,10 +3,20 @@ package queues
 import (
 	"fmt"
 	"strings"
-	"time"
-
-	"github.com/segmentio/ksuid"
 )
+
+// --------------------------------------------------------------------------
+// KSUID
+
+const (
+	// A string-encoded minimum value for a KSUID
+	minStringEncoded = "000000000000000000000000000"
+
+	// A string-encoded maximum value for a KSUID
+	maxStringEncoded = "aWgEPTl1tmebfsQzFP4bxwgy80V"
+)
+
+// --------------------------------------------------------------------------
 
 // All messages are stored under the _q namespace.
 // Queues each have their own name under the _m and _s buckets, e.g., _q._s.high.
@@ -63,8 +73,8 @@ func ParseQueueKey(k []byte) QueueKey {
 	}
 }
 
-func (q QueueKey) Bytes() RawMessageQueueKey {
-	return RawMessageQueueKey([]byte(q.PropertyPath()))
+func (q QueueKey) Bytes() []byte {
+	return []byte(q.PropertyPath())
 }
 
 func (q QueueKey) BucketPath() string {
@@ -79,43 +89,12 @@ func (q QueueKey) PropertyPath() string {
 	return fmt.Sprintf("%s.%s.%s.%s", q.Namespace, q.Bucket, q.Name, q.Property)
 }
 
-// ---------------------------------------------------------------------------
-
-// RawMessageQueueKey represents a lexicographically sorted key
-type RawMessageQueueKey []byte
-
-func ksuidLen() int {
-	return len(ksuid.Max)
-}
-
-func New(prefix []byte) (RawMessageQueueKey, error) {
-	return NewWithTime(prefix, time.Now())
-}
-
-func NewWithTime(prefix []byte, t time.Time) (RawMessageQueueKey, error) {
-	k, err := ksuid.NewRandomWithTime(t)
-	if err != nil {
-		return RawMessageQueueKey{}, err
-	}
-	return FromParts(prefix, k), nil
-}
-
-func FromParts(prefix []byte, k ksuid.KSUID) RawMessageQueueKey {
-	pl := len(prefix)
-	key := make([]byte, 0, pl+ksuidLen())
-	key = append(key, prefix...)
-	copy(key[pl:], k.Bytes())
-	return key
-}
-
-func FromBytes(key []byte) RawMessageQueueKey {
-	return RawMessageQueueKey(key)
-}
-
 // PrefixOf a common prefix between two keys (common leading bytes) which is
 // then used as a prefix for Badger to narrow down SSTables to traverse.
-func PrefixOf(seek, until RawMessageQueueKey) []byte {
+func (q QueueKey) PrefixOf(untilQK QueueKey) []byte {
 	var prefix []byte
+	seek := q.Bytes()
+	until := untilQK.Bytes()
 
 	// Calculate the minimum length
 	length := len(seek)
@@ -133,52 +112,95 @@ func PrefixOf(seek, until RawMessageQueueKey) []byte {
 	return prefix
 }
 
-// First returns the smallest possible key given the prefix.
-func First(prefix []byte) RawMessageQueueKey {
-	k := make([]byte, len(prefix)+ksuidLen())
-	copy(k, []byte(prefix))
-	return k
+// FirstMessage returns the smallest possible key given the queue.
+func FirstMessage(queue string) QueueKey {
+	return NewQueueKeyForMessage(queue, minStringEncoded)
 }
 
-// Last returns the largest possible key given the prefix.
-func Last(prefix []byte) RawMessageQueueKey {
-	return FromParts(prefix, ksuid.Max)
+// LastMessage returns the largest possible key given the queue.
+func LastMessage(queue string) QueueKey {
+	return NewQueueKeyForMessage(queue, maxStringEncoded)
 }
 
-func (k RawMessageQueueKey) Bytes() []byte {
-	return k[:]
-}
+// ---------------------------------------------------------------------------
 
-func (k RawMessageQueueKey) Prefix() []byte {
-	// KSUID is at the end, so prefix is everything before that.
-	return k[:len(k)-ksuidLen()]
-}
+// // RawMessageQueueKey represents a lexicographically sorted key
+// type RawMessageQueueKey []byte
 
-func (k RawMessageQueueKey) KSUID() ksuid.KSUID {
-	// KSUID is at the end after the prefix.
-	id, err := ksuid.FromBytes(k[len(k)-ksuidLen():])
-	if err != nil {
-		panic(err)
-	}
-	return id
-}
+// func ksuidLen() int {
+// 	return len(ksuid.Max)
+// }
 
-// Next returns the next RawMessageQueueKey after k. The prefix remains the same.
-func (k RawMessageQueueKey) Next() RawMessageQueueKey {
-	return FromParts(k.Prefix(), k.KSUID().Next())
-}
+// func New(prefix []byte) (RawMessageQueueKey, error) {
+// 	return NewWithTime(prefix, time.Now())
+// }
 
-// Next returns the previous RawMessageQueueKey before k. The prefix remains the same.
-func (k RawMessageQueueKey) Prev() RawMessageQueueKey {
-	return FromParts(k.Prefix(), k.KSUID().Prev())
-}
+// func NewWithTime(prefix []byte, t time.Time) (RawMessageQueueKey, error) {
+// 	k, err := ksuid.NewRandomWithTime(t)
+// 	if err != nil {
+// 		return RawMessageQueueKey{}, err
+// 	}
+// 	return FromParts(prefix, k), nil
+// }
 
-func (k RawMessageQueueKey) Clone() RawMessageQueueKey {
-	k2 := make([]byte, len(k))
-	copy(k2[:], k[:])
-	return k2
-}
+// func FromParts(prefix []byte, k ksuid.KSUID) RawMessageQueueKey {
+// 	pl := len(prefix)
+// 	key := make([]byte, 0, pl+ksuidLen())
+// 	key = append(key, prefix...)
+// 	copy(key[pl:], k.Bytes())
+// 	return key
+// }
 
-func (k RawMessageQueueKey) String() string {
-	return string(k.Bytes())
-}
+// func FromBytes(key []byte) RawMessageQueueKey {
+// 	return RawMessageQueueKey(key)
+// }
+
+// // First returns the smallest possible key given the prefix.
+// func First(prefix []byte) RawMessageQueueKey {
+// 	k := make([]byte, len(prefix)+ksuidLen())
+// 	copy(k, []byte(prefix))
+// 	return k
+// }
+
+// // Last returns the largest possible key given the prefix.
+// func Last(prefix []byte) RawMessageQueueKey {
+// 	return FromParts(prefix, ksuid.Max)
+// }
+
+// func (k RawMessageQueueKey) Bytes() []byte {
+// 	return k[:]
+// }
+
+// func (k RawMessageQueueKey) Prefix() []byte {
+// 	// KSUID is at the end, so prefix is everything before that.
+// 	return k[:len(k)-ksuidLen()]
+// }
+
+// func (k RawMessageQueueKey) KSUID() ksuid.KSUID {
+// 	// KSUID is at the end after the prefix.
+// 	id, err := ksuid.FromBytes(k[len(k)-ksuidLen():])
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	return id
+// }
+
+// // Next returns the next RawMessageQueueKey after k. The prefix remains the same.
+// func (k RawMessageQueueKey) Next() RawMessageQueueKey {
+// 	return FromParts(k.Prefix(), k.KSUID().Next())
+// }
+
+// // Next returns the previous RawMessageQueueKey before k. The prefix remains the same.
+// func (k RawMessageQueueKey) Prev() RawMessageQueueKey {
+// 	return FromParts(k.Prefix(), k.KSUID().Prev())
+// }
+
+// func (k RawMessageQueueKey) Clone() RawMessageQueueKey {
+// 	k2 := make([]byte, len(k))
+// 	copy(k2[:], k[:])
+// 	return k2
+// }
+
+// func (k RawMessageQueueKey) String() string {
+// 	return string(k.Bytes())
+// }

@@ -23,7 +23,7 @@ func createQueue(db *badger.DB, name string) (*Queue, error) {
 	// Create the queue and persist it.
 	q := &Queue{
 		name:       name,
-		checkpoint: First([]byte(name)), // set to the min possible value
+		checkpoint: FirstMessage(name).Bytes(), // set to the min possible value
 	}
 
 	// Save the queue state to disk
@@ -102,11 +102,11 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 // each key and value present in the store. If f returns false, range stops the
 // iteration. The implementation must guarantee that the keys are
 // lexigraphically sorted.
-func (q *Queue) Range(seek, until RawMessageQueueKey, f func(key, value []byte) bool) error {
+func (q *Queue) Range(seek, until QueueKey, f func(key, value []byte) bool) error {
 	return q.db.View(func(tx *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
-		opts.Prefix = PrefixOf(seek, until)
+		opts.Prefix = seek.PrefixOf(until)
 		it := tx.NewIterator(opts)
 		defer it.Close()
 
