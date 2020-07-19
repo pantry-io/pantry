@@ -2,8 +2,8 @@ namespace flatbuf;
 
 enum BackoffStrategy : byte { Undefined = 0, Exponential, Fixed }
 
-/// RequeueMeta holds meta information about requeue message functionality.
-table RequeueMeta {
+/// The format for serializing requeue message.
+table RequeueMessage {
     /// The number of times requeue should be attempted.
     retries: uint64 = 0;
 
@@ -18,7 +18,7 @@ table RequeueMeta {
     /// Backoff strategy that will be used for determining the next delay should
 	/// the message fail to be acknowledged on replay. i.e. fixed interval or
 	/// exponential
-    backoff_strategy: BackoffStrategy;
+    backoff_strategy: BackoffStrategy = Undefined;
 
     /// The persistence queue events will be stored in.
     /// This can be useful if you need multiple queues by priority.
@@ -27,12 +27,6 @@ table RequeueMeta {
     /// queue does not starve out a low volumn queue.
     /// The default queue is "default" when one is not provided.
     persistence_queue: string;
-}
-
-/// The format for serializing requeue message.
-table RequeueMessage {
-    /// RequeueMeta holds meta information about requeue message functionality.
-    meta: RequeueMeta;
 
     /// The original subject of the message.
     original_subject: string;

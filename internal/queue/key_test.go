@@ -1,4 +1,4 @@
-package queues_test
+package queue_test
 
 // func Test_Bytes(t *testing.T) {
 // 	uid := ksuid.New()

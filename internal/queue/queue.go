@@ -1,4 +1,4 @@
-package queues
+package queue
 
 import (
 	"bytes"
@@ -98,11 +98,39 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 	return nil
 }
 
+type QueueItem struct {
+	// K is the key of the item.
+	K []byte
+
+	// V is the value of the item.
+	V []byte
+
+	// ExpiresAt is a Unix time, the number of seconds elapsed
+	// since January 1, 1970 UTC.
+	ExpiresAt uint64
+}
+
+// IsExpired returns true if this item has expired.
+func (qi QueueItem) IsExpired() bool {
+	return qi.ExpiresAt <= uint64(time.Now().Unix())
+}
+
+// ExpiresAtTime returns the Time this item will expire.
+func (qi QueueItem) ExpiresAtTime() time.Time {
+	return time.Unix(int64(qi.ExpiresAt), 0)
+}
+
+// DurationUntilExpires returns a duration indicating how much time until this item
+// expires.
+func (qi QueueItem) DurationUntilExpires() time.Duration {
+	return time.Until(qi.ExpiresAtTime())
+}
+
 // Range performs a range query against the storage. It calls f sequentially for
 // each key and value present in the store. If f returns false, range stops the
 // iteration. The implementation must guarantee that the keys are
 // lexigraphically sorted.
-func (q *Queue) Range(seek, until QueueKey, f func(key, value []byte) bool) error {
+func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) error {
 	return q.db.View(func(tx *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
@@ -113,13 +141,18 @@ func (q *Queue) Range(seek, until QueueKey, f func(key, value []byte) bool) erro
 		// Seek the prefix and check the key so we can quickly exit the iteration.
 		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
 			item := it.Item()
+			if item.IsDeletedOrExpired() { // Not sure if this is necessary.
+				continue
+			}
+
 			key := item.KeyCopy(nil)
 			if bytes.Compare(key, until.Bytes()) > 0 {
 				return nil // Stop if we're reached the end
 			}
 
 			// Fetch the value
-			if value, err := item.ValueCopy(nil); err != nil && f(key, value) {
+			value, err := item.ValueCopy(nil)
+			if err != nil && f(QueueItem{K: key, V: value, ExpiresAt: item.ExpiresAt()}) {
 				return nil
 			}
 		}
@@ -129,7 +162,7 @@ func (q *Queue) Range(seek, until QueueKey, f func(key, value []byte) bool) erro
 
 // ReadFromCheckpoint should begin reading in all the events from the checkpoint
 // up until the provided Time.
-func (q *Queue) ReadFromCheckpoint(until time.Time, f func(key, value []byte) bool) error {
+func (q *Queue) ReadFromCheckpoint(until time.Time, f func(QueueItem) bool) error {
 	uid, err := ksuid.NewRandomWithTime(until)
 	if err != nil {
 		return err

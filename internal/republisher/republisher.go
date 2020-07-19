@@ -1,27 +1,23 @@
 package republisher
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
-	"github.com/nickpoorman/nats-requeue/internal/queues"
+	"github.com/nickpoorman/nats-requeue/internal/queue"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 )
 
 const DefaultACKTimeout = 15 * time.Second
 
-type KV struct {
-	K []byte
-	V []byte
-}
-
 type Republisher struct {
 	db       *badger.DB
-	qManager *queues.Manager
+	qManager *queue.Manager
 	nc       *nats.Conn
 
 	mu sync.RWMutex
@@ -30,7 +26,7 @@ type Republisher struct {
 	done chan struct{}
 }
 
-func New(nc *nats.Conn, db *badger.DB, qManager *queues.Manager, interval time.Duration) *Republisher {
+func New(nc *nats.Conn, db *badger.DB, qManager *queue.Manager, interval time.Duration) *Republisher {
 	rq := &Republisher{
 		db:       db,
 		qManager: qManager,
@@ -65,26 +61,35 @@ func (rp *Republisher) republish() {
 	// TODO: Rework this so that this output chan has been prioritized based on
 	// queue.
 	// TODO: Close this chan when we are done with this function
-	ch := make(chan KV)
+	ch := make(chan queue.QueueItem)
 	// defer func(){
 	// 	close(ch)
 	// }()
 
 	now := time.Now() // Read up until now
-	for _, queue := range rp.qManager.Queues() {
-		go func(q *queues.Queue) {
-			err := q.ReadFromCheckpoint(now, func(key, value []byte) bool {
-				ch <- KV{key, value}
+	for _, que := range rp.qManager.Queues() {
+		go func(q *queue.Queue) {
+			err := q.ReadFromCheckpoint(now, func(qi queue.QueueItem) bool {
+				// TODO(nickpoorman): This is blocking the transaction from
+				// being able to close. If this becomes an issue,
+				// may need to buffer these up.
+				ch <- qi
 				return true
 			})
 			if err != nil {
 				log.Err(err).Msg("ReadFromCheckpoint error")
 			}
-		}(queue)
+		}(que)
 	}
 
-	for kv := range ch {
-		fb := flatbuf.GetRootAsRequeueMessage(kv.V, 0)
+	for qi := range ch {
+		fb := flatbuf.GetRootAsRequeueMessage(qi.V, 0)
+		if qi.IsExpired() {
+			// Don't send a message with an expired TTL.
+			// TTL will take care of removing the message from disk for us.
+			continue
+		}
+
 		log.Debug().
 			Str("msg", string(fb.OriginalPayloadBytes())).
 			Msg("republishing message")
@@ -97,24 +102,30 @@ func (rp *Republisher) republish() {
 			log.Err(err).
 				Str("msg", string(fb.OriginalPayloadBytes())).
 				Msg("error doing Request for message")
-			// Requeue the message to disk for a future time.
-			rp.requeueMessageToDisk(kv, fb)
-			continue
+
+			// We just spent a retry.
+			// So if retires == 1 it will now be zero and we should throw away the message.
+			// If retires > 1 then there are retries still left to be spent.
+			if fb.Retries() > 1 {
+				// Requeue the message to disk for a future time.
+				rp.requeueMessageToDisk(qi, fb)
+				continue
+			}
 		}
-		// Got the ACK.
-		// Success. Remove the message from disk.
-		rp.removeMessageFromDisk(kv, fb)
+		// Got the ACK or ran out of retries.
+		// Remove the message from disk.
+		rp.removeMessageFromDisk(qi, fb)
 	}
 }
 
 // TODO: Requeue the message to disk for a future time.
-func (rp *Republisher) requeueMessageToDisk(kv KV, fb *flatbuf.RequeueMessage) {
+func (rp *Republisher) requeueMessageToDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) {
 	// TODO: If this process were to shut off before we requeue to disk,
 	// we could end up with data on disk that is zombied and won't be picked up
 	// because of our checkpoint. To solve this, we can have another goroutine in the background
 	// that infrequeuently checks for messages that are not marked as deleted, but are before our checkpoint.
 
-	entry, err := rp.createEntry(kv, fb)
+	entry, err := rp.createEntry(qi, fb)
 	if err != nil {
 		log.Err(err).
 			Str("msg", string(fb.OriginalPayloadBytes())).
@@ -129,7 +140,7 @@ func (rp *Republisher) requeueMessageToDisk(kv KV, fb *flatbuf.RequeueMessage) {
 		}
 
 		// Then delete our existing key
-		err = txn.Delete(kv.K)
+		err = txn.Delete(qi.K)
 		if err != nil {
 			return err
 		}
@@ -141,32 +152,54 @@ func (rp *Republisher) requeueMessageToDisk(kv KV, fb *flatbuf.RequeueMessage) {
 		Msg("error removing message from disk")
 }
 
-// TODO: Remove the message from disk.
-func (rp *Republisher) removeMessageFromDisk(kv KV, fb *flatbuf.RequeueMessage) {
+func (rp *Republisher) removeMessageFromDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) {
 	err := rp.db.Update(func(txn *badger.Txn) error {
-		return txn.Delete(kv.K)
+		return txn.Delete(qi.K)
 	})
 	log.Err(err).
 		Str("msg", string(fb.OriginalPayloadBytes())).
 		Msg("error removing message from disk")
 }
 
-// TODO: There is probably some opportunity to factor some of this out with the
-// requeue original writes since they are basically doing the same thing.
-func (rp *Republisher) createEntry(kv KV, fb *flatbuf.RequeueMessage) (*badger.Entry, error) {
-	meta := fb.Meta(nil)
-
+func (rp *Republisher) createEntry(qi queue.QueueItem, fb *flatbuf.RequeueMessage) (*badger.Entry, error) {
 	// TODO: We need to change the delay based on the BackoffStrategy.
 	// for now we'll just do fixed backoff.
-	delay := time.Now().Add(time.Duration(meta.Delay()))
+	delay := time.Now().Add(time.Duration(fb.Delay()))
 	kuid, err := ksuid.NewRandomWithTime(delay)
 	if err != nil {
 		log.Err(err).Msg("problem creating a new ksuid")
 		return nil, err
 	}
-	qk := queues.NewQueueKeyForMessage(string(meta.PersistenceQueue()), kuid.String())
+	qk := queue.NewQueueKeyForMessage(string(fb.PersistenceQueue()), kuid.String())
 
-	// TODO: Need to rebuild the value we pass here. It should have updated meta data with the retries ticking down.
+	// Update the message with the new retry count, ttl, etc.
+	if err := adjMsgBeforeRequeueToDisk(qi, fb); err != nil {
+		return nil, err
+	}
 
-	return badger.NewEntry(qk.Bytes(), kv.V).WithTTL(time.Duration(meta.Ttl())), nil
+	return badger.NewEntry(qk.Bytes(), qi.V).WithTTL(time.Duration(fb.Ttl())), nil
+}
+
+func adjMsgBeforeRequeueToDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) error {
+	// Because we just retried, subtract 1 from the number of retries left.
+	retries := fb.Retries()
+	if retries <= 1 {
+		panic("retries should be checked before getting to this point")
+	}
+	ok := fb.MutateRetries(retries - 1)
+	if !ok {
+		return fmt.Errorf("unable to mutate retries on RequeueMessage flatbuffer to: %d", retries-1)
+	}
+
+	// We don't want to write the message back to disk with the same retry it
+	// had before. So this time we update the ttl that is left if there is one.
+	ttl := fb.Ttl()
+	if ttl != 0 {
+		newTTL := uint64(qi.DurationUntilExpires())
+		ok := fb.MutateTtl(newTTL)
+		if !ok {
+			return fmt.Errorf("unable to mutate ttl on RequeueMessage flatbuffer from: %d to: %d", ttl, newTTL)
+		}
+	}
+	return nil
 }

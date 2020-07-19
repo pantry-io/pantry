@@ -472,16 +472,14 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 		Str("msg", string(fb.OriginalPayloadBytes())).
 		Msg("received a message")
 
-	meta := fb.Meta(nil)
-
 	// Build the key
-	qk, err := c.newMessageQueueKey(msg, meta)
+	qk, err := c.newMessageQueueKey(msg, fb)
 	if err != nil {
 		return
 	}
 
 	if err := wb.SetEntry(
-		badger.NewEntry(qk.Bytes(), msg.Data).WithTTL(time.Duration(meta.Ttl())),
+		badger.NewEntry(qk.Bytes(), msg.Data).WithTTL(time.Duration(fb.Ttl())),
 		c.processIngressMessageCallback(msg)); err != nil {
 		log.Err(err).Msg("problem calling SetEntry on WriteBatch")
 		if c.Opts.BadgerWriteMsgErr != nil {
@@ -490,8 +488,8 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 	}
 }
 
-func (c *Conn) newMessageQueueKey(msg *nats.Msg, meta *flatbuf.RequeueMeta) (queues.QueueKey, error) {
-	delay := time.Now().Add(time.Duration(meta.Delay()))
+func (c *Conn) newMessageQueueKey(msg *nats.Msg, fb *flatbuf.RequeueMessage) (queues.QueueKey, error) {
+	delay := time.Now().Add(time.Duration(fb.Delay()))
 	kuid, err := ksuid.NewRandomWithTime(delay)
 	if err != nil {
 		log.Err(err).Msg("problem creating a new key")
@@ -502,7 +500,7 @@ func (c *Conn) newMessageQueueKey(msg *nats.Msg, meta *flatbuf.RequeueMeta) (que
 	}
 	qk := queues.QueueKey{
 		Namespace: queues.QueuesNamespace,
-		Name:      string(meta.PersistenceQueue()),
+		Name:      string(fb.PersistenceQueue()),
 		Bucket:    queues.MessagesBucket,
 		Property:  kuid.String(),
 	}

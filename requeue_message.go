@@ -25,7 +25,7 @@ const (
 //  + The TTL for when the message should expire.
 //  + The delay before it should be retried again.
 //  + Backoff strategy. i.e. fixed interval or exponential
-type RequeueMeta struct {
+type RequeueMessage struct {
 	// The number of times requeue should be attempted.
 	Retries uint64
 
@@ -40,63 +40,6 @@ type RequeueMeta struct {
 	// the message fail to be acknowledged on replay. i.e. fixed interval or
 	// exponential
 	BackoffStrategy BackoffStrategy
-}
-
-func DefaultRequeueMeta() RequeueMeta {
-	return RequeueMeta{
-		Retries:         0,
-		TTL:             0,
-		Delay:           0,
-		BackoffStrategy: BackoffStrategy_Undefined,
-	}
-}
-
-func (r *RequeueMeta) Bytes() []byte {
-	b := flatbuffers.NewBuilder(0)
-	meta := r.toFlatbuf(b)
-	b.Finish(meta)
-	return b.FinishedBytes()
-}
-
-func (r *RequeueMeta) MarshalBinary() ([]byte, error) {
-	return r.Bytes(), nil
-}
-
-func (r *RequeueMeta) NewReader() io.Reader {
-	return bytes.NewReader(r.Bytes())
-}
-
-func (r *RequeueMeta) UnmarshalBinary(data []byte) error {
-	m := flatbuf.GetRootAsRequeueMeta(data, 0)
-	r.fromFlatbuf(m)
-	return nil
-}
-
-func (r *RequeueMeta) toFlatbuf(b *flatbuffers.Builder) flatbuffers.UOffsetT {
-	flatbuf.RequeueMetaStart(b)
-	flatbuf.RequeueMetaAddRetries(b, r.Retries)
-	flatbuf.RequeueMetaAddTtl(b, r.TTL)
-	flatbuf.RequeueMetaAddDelay(b, r.Delay)
-	flatbuf.RequeueMetaAddBackoffStrategy(b, r.backoffStrategyToFlatbuf())
-	return flatbuf.RequeueMetaEnd(b)
-}
-
-func (r *RequeueMeta) backoffStrategyToFlatbuf() flatbuf.BackoffStrategy {
-	if r.BackoffStrategy > BackoffStrategy_Fixed {
-		return flatbuf.BackoffStrategyUndefined
-	}
-	return flatbuf.BackoffStrategy(r.BackoffStrategy)
-}
-
-func (r *RequeueMeta) fromFlatbuf(m *flatbuf.RequeueMeta) {
-	r.Retries = m.Retries()
-	r.TTL = m.Ttl()
-	r.Delay = m.Delay()
-	r.BackoffStrategy = BackoffStrategy(m.BackoffStrategy())
-}
-
-type RequeueMessage struct {
-	Meta RequeueMeta
 
 	// The original subject of the message.
 	OriginalSubject string
@@ -107,7 +50,7 @@ type RequeueMessage struct {
 
 func DefaultRequeueMessage() RequeueMessage {
 	return RequeueMessage{
-		Meta: DefaultRequeueMeta(),
+		BackoffStrategy: BackoffStrategy_Undefined,
 	}
 }
 
@@ -140,27 +83,36 @@ func (r *RequeueMessage) UnmarshalBinary(data []byte) error {
 }
 
 func (r *RequeueMessage) toFlatbuf(b *flatbuffers.Builder) flatbuffers.UOffsetT {
-	meta := r.Meta.toFlatbuf(b)
-
 	originalSubject := b.CreateByteString([]byte(r.OriginalSubject))
 	originalPayload := b.CreateByteVector(r.OriginalPayload)
 
 	flatbuf.RequeueMessageStart(b)
+	flatbuf.RequeueMessageAddRetries(b, r.Retries)
+	flatbuf.RequeueMessageAddTtl(b, r.TTL)
+	flatbuf.RequeueMessageAddDelay(b, r.Delay)
+	flatbuf.RequeueMessageAddBackoffStrategy(b, r.backoffStrategyToFlatbuf())
 	flatbuf.RequeueMessageAddOriginalSubject(b, originalSubject)
 	flatbuf.RequeueMessageAddOriginalPayload(b, originalPayload)
-	flatbuf.RequeueMessageAddMeta(b, meta)
 	return flatbuf.RequeueMessageEnd(b)
 }
 
 func (r *RequeueMessage) fromFlatbuf(m *flatbuf.RequeueMessage) {
-	r.Meta.fromFlatbuf(m.Meta(nil))
+	r.Retries = m.Retries()
+	r.TTL = m.Ttl()
+	r.Delay = m.Delay()
+	r.BackoffStrategy = BackoffStrategy(m.BackoffStrategy())
 	r.OriginalSubject = string(m.OriginalSubject())
 	r.OriginalPayload = m.OriginalPayloadBytes()
 }
 
+func (r *RequeueMessage) backoffStrategyToFlatbuf() flatbuf.BackoffStrategy {
+	if r.BackoffStrategy > BackoffStrategy_Fixed {
+		return flatbuf.BackoffStrategyUndefined
+	}
+	return flatbuf.BackoffStrategy(r.BackoffStrategy)
+}
+
 var (
-	_ encoding.BinaryMarshaler   = (*RequeueMeta)(nil)
-	_ encoding.BinaryUnmarshaler = (*RequeueMeta)(nil)
 	_ encoding.BinaryMarshaler   = (*RequeueMessage)(nil)
 	_ encoding.BinaryUnmarshaler = (*RequeueMessage)(nil)
 )

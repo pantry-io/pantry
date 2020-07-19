@@ -35,132 +35,6 @@ func (v BackoffStrategy) String() string {
 	return "BackoffStrategy(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
-/// RequeueMeta holds meta information about requeue message functionality.
-type RequeueMeta struct {
-	_tab flatbuffers.Table
-}
-
-func GetRootAsRequeueMeta(buf []byte, offset flatbuffers.UOffsetT) *RequeueMeta {
-	n := flatbuffers.GetUOffsetT(buf[offset:])
-	x := &RequeueMeta{}
-	x.Init(buf, n+offset)
-	return x
-}
-
-func (rcv *RequeueMeta) Init(buf []byte, i flatbuffers.UOffsetT) {
-	rcv._tab.Bytes = buf
-	rcv._tab.Pos = i
-}
-
-func (rcv *RequeueMeta) Table() flatbuffers.Table {
-	return rcv._tab
-}
-
-/// The number of times requeue should be attempted.
-func (rcv *RequeueMeta) Retries() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-/// The number of times requeue should be attempted.
-func (rcv *RequeueMeta) MutateRetries(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(4, n)
-}
-
-/// The TTL for when the msssage should expire. This is useful for ensuring
-/// messages are not retried after a certain time. TTL must be expressed
-/// as the number of nanosecods to expire after the message has been committed.
-func (rcv *RequeueMeta) Ttl() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-/// The TTL for when the msssage should expire. This is useful for ensuring
-/// messages are not retried after a certain time. TTL must be expressed
-/// as the number of nanosecods to expire after the message has been committed.
-func (rcv *RequeueMeta) MutateTtl(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(6, n)
-}
-
-/// The delay before the message should be replayed in nanoseconds.
-func (rcv *RequeueMeta) Delay() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-/// The delay before the message should be replayed in nanoseconds.
-func (rcv *RequeueMeta) MutateDelay(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(8, n)
-}
-
-/// Backoff strategy that will be used for determining the next delay should
-/// the message fail to be acknowledged on replay. i.e. fixed interval or
-/// exponential
-func (rcv *RequeueMeta) BackoffStrategy() BackoffStrategy {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
-	if o != 0 {
-		return BackoffStrategy(rcv._tab.GetInt8(o + rcv._tab.Pos))
-	}
-	return 0
-}
-
-/// Backoff strategy that will be used for determining the next delay should
-/// the message fail to be acknowledged on replay. i.e. fixed interval or
-/// exponential
-func (rcv *RequeueMeta) MutateBackoffStrategy(n BackoffStrategy) bool {
-	return rcv._tab.MutateInt8Slot(10, int8(n))
-}
-
-/// The persistence queue events will be stored in.
-/// This can be useful if you need multiple queues by priority.
-/// On the sever you can configure the priority certain queues 
-/// should have over other. This way you can ensure a given high volumn 
-/// queue does not starve out a low volumn queue.
-/// The default queue is "default" when one is not provided.
-func (rcv *RequeueMeta) PersistenceQueue() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-/// The persistence queue events will be stored in.
-/// This can be useful if you need multiple queues by priority.
-/// On the sever you can configure the priority certain queues 
-/// should have over other. This way you can ensure a given high volumn 
-/// queue does not starve out a low volumn queue.
-/// The default queue is "default" when one is not provided.
-func RequeueMetaStart(builder *flatbuffers.Builder) {
-	builder.StartObject(5)
-}
-func RequeueMetaAddRetries(builder *flatbuffers.Builder, retries uint64) {
-	builder.PrependUint64Slot(0, retries, 0)
-}
-func RequeueMetaAddTtl(builder *flatbuffers.Builder, ttl uint64) {
-	builder.PrependUint64Slot(1, ttl, 0)
-}
-func RequeueMetaAddDelay(builder *flatbuffers.Builder, delay uint64) {
-	builder.PrependUint64Slot(2, delay, 0)
-}
-func RequeueMetaAddBackoffStrategy(builder *flatbuffers.Builder, backoffStrategy BackoffStrategy) {
-	builder.PrependInt8Slot(3, int8(backoffStrategy), 0)
-}
-func RequeueMetaAddPersistenceQueue(builder *flatbuffers.Builder, persistenceQueue flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(persistenceQueue), 0)
-}
-func RequeueMetaEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	return builder.EndObject()
-}
 /// The format for serializing requeue message.
 type RequeueMessage struct {
 	_tab flatbuffers.Table
@@ -182,24 +56,93 @@ func (rcv *RequeueMessage) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// RequeueMeta holds meta information about requeue message functionality.
-func (rcv *RequeueMessage) Meta(obj *RequeueMeta) *RequeueMeta {
+/// The number of times requeue should be attempted.
+func (rcv *RequeueMessage) Retries() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(RequeueMeta)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+/// The number of times requeue should be attempted.
+func (rcv *RequeueMessage) MutateRetries(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(4, n)
+}
+
+/// The TTL for when the msssage should expire. This is useful for ensuring
+/// messages are not retried after a certain amount time. TTL must be expressed
+/// as the number of nanosecods to expire after the message has been committed.
+func (rcv *RequeueMessage) Ttl() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+/// The TTL for when the msssage should expire. This is useful for ensuring
+/// messages are not retried after a certain amount time. TTL must be expressed
+/// as the number of nanosecods to expire after the message has been committed.
+func (rcv *RequeueMessage) MutateTtl(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(6, n)
+}
+
+/// The delay before the message should be replayed in nanoseconds.
+func (rcv *RequeueMessage) Delay() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+/// The delay before the message should be replayed in nanoseconds.
+func (rcv *RequeueMessage) MutateDelay(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(8, n)
+}
+
+/// Backoff strategy that will be used for determining the next delay should
+/// the message fail to be acknowledged on replay. i.e. fixed interval or
+/// exponential
+func (rcv *RequeueMessage) BackoffStrategy() BackoffStrategy {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return BackoffStrategy(rcv._tab.GetInt8(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+/// Backoff strategy that will be used for determining the next delay should
+/// the message fail to be acknowledged on replay. i.e. fixed interval or
+/// exponential
+func (rcv *RequeueMessage) MutateBackoffStrategy(n BackoffStrategy) bool {
+	return rcv._tab.MutateInt8Slot(10, int8(n))
+}
+
+/// The persistence queue events will be stored in.
+/// This can be useful if you need multiple queues by priority.
+/// On the sever you can configure the priority certain queues 
+/// should have over other. This way you can ensure a given high volumn 
+/// queue does not starve out a low volumn queue.
+/// The default queue is "default" when one is not provided.
+func (rcv *RequeueMessage) PersistenceQueue() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
 	return nil
 }
 
-/// RequeueMeta holds meta information about requeue message functionality.
+/// The persistence queue events will be stored in.
+/// This can be useful if you need multiple queues by priority.
+/// On the sever you can configure the priority certain queues 
+/// should have over other. This way you can ensure a given high volumn 
+/// queue does not starve out a low volumn queue.
+/// The default queue is "default" when one is not provided.
 /// The original subject of the message.
 func (rcv *RequeueMessage) OriginalSubject() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -209,7 +152,7 @@ func (rcv *RequeueMessage) OriginalSubject() []byte {
 /// The original subject of the message.
 /// Original message payload
 func (rcv *RequeueMessage) OriginalPayload(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -218,7 +161,7 @@ func (rcv *RequeueMessage) OriginalPayload(j int) byte {
 }
 
 func (rcv *RequeueMessage) OriginalPayloadLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -226,7 +169,7 @@ func (rcv *RequeueMessage) OriginalPayloadLength() int {
 }
 
 func (rcv *RequeueMessage) OriginalPayloadBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -235,7 +178,7 @@ func (rcv *RequeueMessage) OriginalPayloadBytes() []byte {
 
 /// Original message payload
 func (rcv *RequeueMessage) MutateOriginalPayload(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -244,16 +187,28 @@ func (rcv *RequeueMessage) MutateOriginalPayload(j int, n byte) bool {
 }
 
 func RequeueMessageStart(builder *flatbuffers.Builder) {
-	builder.StartObject(3)
+	builder.StartObject(7)
 }
-func RequeueMessageAddMeta(builder *flatbuffers.Builder, meta flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(meta), 0)
+func RequeueMessageAddRetries(builder *flatbuffers.Builder, retries uint64) {
+	builder.PrependUint64Slot(0, retries, 0)
+}
+func RequeueMessageAddTtl(builder *flatbuffers.Builder, ttl uint64) {
+	builder.PrependUint64Slot(1, ttl, 0)
+}
+func RequeueMessageAddDelay(builder *flatbuffers.Builder, delay uint64) {
+	builder.PrependUint64Slot(2, delay, 0)
+}
+func RequeueMessageAddBackoffStrategy(builder *flatbuffers.Builder, backoffStrategy BackoffStrategy) {
+	builder.PrependInt8Slot(3, int8(backoffStrategy), 0)
+}
+func RequeueMessageAddPersistenceQueue(builder *flatbuffers.Builder, persistenceQueue flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(persistenceQueue), 0)
 }
 func RequeueMessageAddOriginalSubject(builder *flatbuffers.Builder, originalSubject flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(originalSubject), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(originalSubject), 0)
 }
 func RequeueMessageAddOriginalPayload(builder *flatbuffers.Builder, originalPayload flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(originalPayload), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(originalPayload), 0)
 }
 func RequeueMessageStartOriginalPayloadVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
