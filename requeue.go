@@ -11,6 +11,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
 	"github.com/nickpoorman/nats-requeue/internal/queues"
+	"github.com/nickpoorman/nats-requeue/internal/republisher"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
@@ -233,7 +234,8 @@ type Conn struct {
 	badgerDB *badger.DB
 
 	// Queues
-	qManager *queues.Manager
+	qManager    *queues.Manager
+	republisher *republisher.Republisher
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -550,6 +552,7 @@ func (c *Conn) initNatsProducers() error {
 	c.qManager = manager
 
 	// Create a republisher
+	c.republisher = republisher.New(c.nc, c.badgerDB, manager, 15*time.Second)
 
 	// On some interval, look at messages that have been written to badger
 	// and see if any of them are ready to be sent.

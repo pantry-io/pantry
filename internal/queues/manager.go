@@ -10,14 +10,16 @@ import (
 type Manager struct {
 	db *badger.DB
 
-	mu     sync.RWMutex
-	queues []*Queue
+	mu         sync.RWMutex
+	queues     []*Queue
+	priorities map[string]int
 }
 
 // NewManger creates a NewManager responsible for managing the queues.
 func NewManager(db *badger.DB) (*Manager, error) {
 	m := &Manager{
-		db: db,
+		db:         db,
+		priorities: make(map[string]int),
 	}
 	if err := m.loadFromDisk(); err != nil {
 		return nil, err

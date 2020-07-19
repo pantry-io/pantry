@@ -91,10 +91,8 @@ func (q QueueKey) PropertyPath() string {
 
 // PrefixOf a common prefix between two keys (common leading bytes) which is
 // then used as a prefix for Badger to narrow down SSTables to traverse.
-func (q QueueKey) PrefixOf(untilQK QueueKey) []byte {
+func PrefixOf(seek, until []byte) []byte {
 	var prefix []byte
-	seek := q.Bytes()
-	until := untilQK.Bytes()
 
 	// Calculate the minimum length
 	length := len(seek)

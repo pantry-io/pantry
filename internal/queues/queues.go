@@ -106,14 +106,14 @@ func (q *Queue) Range(seek, until QueueKey, f func(key, value []byte) bool) erro
 	return q.db.View(func(tx *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
-		opts.Prefix = seek.PrefixOf(until)
+		opts.Prefix = PrefixOf(seek.Bytes(), until.Bytes())
 		it := tx.NewIterator(opts)
 		defer it.Close()
 
 		// Seek the prefix and check the key so we can quickly exit the iteration.
 		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
 			item := it.Item()
-			key := item.Key()
+			key := item.KeyCopy(nil)
 			if bytes.Compare(key, until.Bytes()) > 0 {
 				return nil // Stop if we're reached the end
 			}
@@ -129,15 +129,11 @@ func (q *Queue) Range(seek, until QueueKey, f func(key, value []byte) bool) erro
 
 // ReadFromCheckpoint should begin reading in all the events from the checkpoint
 // up until the provided Time.
-func (q *Queue) ReadFromCheckpoint(until time.Time) error {
+func (q *Queue) ReadFromCheckpoint(until time.Time, f func(key, value []byte) bool) error {
 	uid, err := ksuid.NewRandomWithTime(until)
 	if err != nil {
 		return err
 	}
-
-	NewQueueKeyForMessage(q.name, uid.String())
-
-	// q.Range(key.FromBytes(q.checkpoint))
-
-	return nil
+	untilQK := NewQueueKeyForMessage(q.name, uid.String())
+	return q.Range(ParseQueueKey(q.checkpoint), untilQK, f)
 }
