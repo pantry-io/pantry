@@ -9,6 +9,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
 	"github.com/nickpoorman/nats-requeue/internal/queue"
+	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 )
@@ -32,6 +33,7 @@ type Republisher struct {
 func New(nc *nats.Conn, db *badger.DB, qManager *queue.Manager, pubInterval time.Duration) *Republisher {
 	rq := &Republisher{
 		db:          db,
+		nc:          nc,
 		qManager:    qManager,
 		pubInterval: pubInterval,
 		quit:        make(chan struct{}),
@@ -76,11 +78,12 @@ func (rp *Republisher) Close() {
 // republish check all the queues for new messages
 // that are ready to be sent and trigger a publish for any that are.
 func (rp *Republisher) republish() {
-	log.Debug().Msg("republisher triggered.")
+	log.Debug().Msg("republisher: republish: triggered.")
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
 
 	qs := rp.qManager.Queues()
+	log.Debug().Msgf("republisher: republish: number of queues to process: %d", len(qs))
 
 	if len(qs) == 0 {
 		// If there are no queues then there is nothing for us to do.
@@ -100,8 +103,11 @@ func (rp *Republisher) republish() {
 	for _, que := range qs {
 		go func(q *queue.Queue) {
 			defer wg.Done()
+			log.Debug().Msgf("republisher: republish: processing queue: %s", q.Name())
 			// TOOD: If rp.quit is closed, we should stop this early and checkpoint where we're at.
 			checkpoint, err := q.ReadFromCheckpoint(now, func(qi queue.QueueItem) bool {
+				log.Debug().Msg("republisher: republish: processing queue item")
+
 				// TODO(nickpoorman): This is blocking the transaction from
 				// being able to close. If this becomes an issue,
 				// may need to buffer these up.
@@ -110,25 +116,32 @@ func (rp *Republisher) republish() {
 			})
 			if err != nil {
 				log.Err(err).Msg("called to ReadFromCheckpoint failed")
+				return
 			}
+			log.Debug().Msgf("republisher: republish: processed queue: %s. Updating checkpoint: %s", q.Name(), checkpoint.String())
 			// Update the checkpoint
 			if err := q.UpdateCheckpoint(checkpoint); err != nil {
 				log.Err(err).Msg("call to UpdateCheckpoint failed")
+				return
 			}
 		}(que)
 	}
 
 	for qi := range ch {
 		fb := flatbuf.GetRootAsRequeueMessage(qi.V, 0)
-		if qi.IsExpired() {
-			// Don't send a message with an expired TTL.
-			// TTL will take care of removing the message from disk for us.
-			continue
-		}
 
 		log.Debug().
 			Str("msg", string(fb.OriginalPayloadBytes())).
 			Msg("republishing message")
+
+		if qi.IsExpired() {
+			// Don't send a message with an expired TTL.
+			// TTL will take care of removing the message from disk for us.
+			log.Debug().
+				Str("msg", string(fb.OriginalPayloadBytes())).
+				Msg("message is expired")
+			continue
+		}
 
 		subj := string(fb.OriginalSubject())
 		data := fb.OriginalPayloadBytes()
@@ -183,18 +196,20 @@ func (rp *Republisher) requeueMessageToDisk(qi queue.QueueItem, fb *flatbuf.Requ
 
 		return nil
 	})
-	log.Err(err).
-		Str("msg", string(fb.OriginalPayloadBytes())).
-		Msg("error removing message from disk")
+	if err != nil {
+		return
+	}
 }
 
 func (rp *Republisher) removeMessageFromDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) {
 	err := rp.db.Update(func(txn *badger.Txn) error {
 		return txn.Delete(qi.K)
 	})
-	log.Err(err).
-		Str("msg", string(fb.OriginalPayloadBytes())).
-		Msg("error removing message from disk")
+	if err != nil {
+		log.Err(err).
+			Str("msg", string(fb.OriginalPayloadBytes())).
+			Msg("error removing message from disk")
+	}
 }
 
 func (rp *Republisher) createEntry(qi queue.QueueItem, fb *flatbuf.RequeueMessage) (*badger.Entry, error) {
@@ -206,7 +221,7 @@ func (rp *Republisher) createEntry(qi queue.QueueItem, fb *flatbuf.RequeueMessag
 		log.Err(err).Msg("problem creating a new ksuid")
 		return nil, err
 	}
-	qk := queue.NewQueueKeyForMessage(string(fb.PersistenceQueue()), kuid.String())
+	qk := queue.NewQueueKeyForMessage(protocol.GetQueueName(fb), kuid.String())
 
 	// Update the message with the new retry count, ttl, etc.
 	if err := adjMsgBeforeRequeueToDisk(qi, fb); err != nil {

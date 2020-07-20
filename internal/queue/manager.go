@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -132,6 +133,11 @@ func (m *Manager) loadFromDisk() error {
 func (m *Manager) CreateQueue(qk QueueKey) (*Queue, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	name := qk.Name
+	if name == "" {
+		return nil, fmt.Errorf("queue name cannot be blank")
+	}
 
 	// Only create the queue if it doesn't already exist.
 	if q, ok := m.queues[qk.Name]; ok {

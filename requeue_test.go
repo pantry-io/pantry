@@ -13,8 +13,8 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	requeue "github.com/nickpoorman/nats-requeue"
+	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
@@ -39,7 +39,7 @@ func setup(t *testing.T) string {
 }
 
 func Test_RequeueConnect(t *testing.T) {
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 
 	s := natsserver.RunDefaultServer()
 	// defaultOpts := natsserver.DefaultTestOptions
@@ -75,6 +75,7 @@ func Test_RequeueConnect(t *testing.T) {
 		requeue.NATSServers(clientURL),
 		requeue.NATSSubject(subject),
 		requeue.NATSQueueName(requeue.DefaultNatsQueueName),
+		requeue.RepublisherInterval(1*time.Second),
 	)
 	if err != nil {
 		t.Fatalf("Error on requeue connect: %v", err)
@@ -110,6 +111,9 @@ func Test_RequeueConnect(t *testing.T) {
 	originalSubject := "foo.bar.baz"
 	_, err = nc.Subscribe(originalSubject, func(msg *nats.Msg) {
 		t.Logf("got replayed message: %s", string(msg.Data))
+		if err := msg.Respond(nil); err != nil {
+			t.Fatal(fmt.Errorf("failed to respond to message: %w", err))
+		}
 		republishedWG.Done()
 	})
 	assert.Nil(t, err)
@@ -184,16 +188,16 @@ func Test_RequeueConnect(t *testing.T) {
 	cancel()
 
 	<-rc.HasBeenClosed()
-
-	log.Info().Msg("right terminated.")
 }
 
 func buildPayload(i int, originalSubject string) []byte {
-	msg := requeue.DefaultRequeueMessage()
+	msg := protocol.DefaultRequeueMessage()
+	msg.Retries = 1
+	msg.TTL = uint64(5 * 24 * time.Hour)
+	msg.Delay = uint64(1 * time.Nanosecond)
+	msg.BackoffStrategy = protocol.BackoffStrategy_Exponential
+	// msg.QueueName = "default"
 	msg.OriginalSubject = originalSubject
 	msg.OriginalPayload = []byte(fmt.Sprintf("my awesome payload %d", i))
-	msg.BackoffStrategy = requeue.BackoffStrategy_Exponential
-	msg.Delay = uint64(1 * time.Nanosecond)
-	msg.Retries = 1
 	return msg.Bytes()
 }

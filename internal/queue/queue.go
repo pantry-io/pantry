@@ -13,6 +13,10 @@ import (
 
 type Checkpoint []byte
 
+func (c Checkpoint) String() string {
+	return string(c)
+}
+
 type Queue struct {
 	db *badger.DB
 
@@ -135,18 +139,38 @@ func (qi QueueItem) DurationUntilExpires() time.Duration {
 // each key and value present in the store. If f returns false, range stops the
 // iteration. The implementation must guarantee that the keys are
 // lexigraphically sorted.
-func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) error {
-	return q.db.View(func(tx *badger.Txn) error {
+func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) (Checkpoint, error) {
+	checkpoint := seek.Bytes()
+	err := q.db.View(func(tx *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
 		opts.Prefix = PrefixOf(seek.Bytes(), until.Bytes())
 		it := tx.NewIterator(opts)
 		defer it.Close()
 
+		log.Debug().
+			Str("seek", string(seek.Bytes())).
+			Str("until", string(until.Bytes())).
+			Str("prefix", string(opts.Prefix)).
+			Msg("Queue: Range: starting iterator")
+
 		// Seek the prefix and check the key so we can quickly exit the iteration.
 		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
 			item := it.Item()
+			log.Debug().
+				Str("seek", string(seek.Bytes())).
+				Str("until", string(until.Bytes())).
+				Str("prefix", string(opts.Prefix)).
+				Str("item.Key", string(item.Key())).
+				Msg("Queue: Range: iterator: got item")
+
 			if item.IsDeletedOrExpired() { // Not sure if this is necessary.
+				log.Debug().
+					Str("seek", string(seek.Bytes())).
+					Str("until", string(until.Bytes())).
+					Str("prefix", string(opts.Prefix)).
+					Str("item.Key", string(item.Key())).
+					Msg("Queue: Range: iterator: item is expired")
 				continue
 			}
 
@@ -157,12 +181,22 @@ func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) error {
 
 			// Fetch the value
 			value, err := item.ValueCopy(nil)
-			if err != nil && f(QueueItem{K: key, V: value, ExpiresAt: item.ExpiresAt()}) {
+			if err != nil {
+				return err
+			}
+			if !f(QueueItem{K: key, V: value, ExpiresAt: item.ExpiresAt()}) {
+				log.Debug().
+					Str("seek", string(seek.Bytes())).
+					Str("until", string(until.Bytes())).
+					Str("prefix", string(opts.Prefix)).
+					Msg("Queue: Range: callback returned false. Stopping range.")
 				return nil
 			}
+			checkpoint = key
 		}
 		return nil
 	})
+	return checkpoint, err
 }
 
 // ReadFromCheckpoint should begin reading in all the events from the checkpoint
@@ -178,5 +212,9 @@ func (q *Queue) ReadFromCheckpoint(until time.Time, f func(QueueItem) bool) (Che
 	q.mu.RUnlock()
 
 	untilQK := NewQueueKeyForMessage(name, uid.String())
-	return checkpoint, q.Range(ParseQueueKey(checkpoint), untilQK, f)
+	log.Debug().
+		Str("queue", name).
+		Str("checkpoint", checkpoint.String()).
+		Msg("Queue: ReadFromCheckpoint: calling range")
+	return q.Range(ParseQueueKey(checkpoint), untilQK, f)
 }

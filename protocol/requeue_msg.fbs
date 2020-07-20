@@ -23,10 +23,10 @@ table RequeueMessage {
     /// The persistence queue events will be stored in.
     /// This can be useful if you need multiple queues by priority.
     /// On the sever you can configure the priority certain queues 
-    /// should have over other. This way you can ensure a given high volumn 
-    /// queue does not starve out a low volumn queue.
+    /// should have over other. This way you can ensure a given high volume 
+    /// queue does not starve out a low volume queue.
     /// The default queue is "default" when one is not provided.
-    persistence_queue: string;
+    queue_name: string;
 
     /// The original subject of the message.
     original_subject: string;

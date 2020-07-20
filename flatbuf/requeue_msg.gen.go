@@ -123,10 +123,10 @@ func (rcv *RequeueMessage) MutateBackoffStrategy(n BackoffStrategy) bool {
 /// The persistence queue events will be stored in.
 /// This can be useful if you need multiple queues by priority.
 /// On the sever you can configure the priority certain queues 
-/// should have over other. This way you can ensure a given high volumn 
-/// queue does not starve out a low volumn queue.
+/// should have over other. This way you can ensure a given high volume 
+/// queue does not starve out a low volume queue.
 /// The default queue is "default" when one is not provided.
-func (rcv *RequeueMessage) PersistenceQueue() []byte {
+func (rcv *RequeueMessage) QueueName() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -137,8 +137,8 @@ func (rcv *RequeueMessage) PersistenceQueue() []byte {
 /// The persistence queue events will be stored in.
 /// This can be useful if you need multiple queues by priority.
 /// On the sever you can configure the priority certain queues 
-/// should have over other. This way you can ensure a given high volumn 
-/// queue does not starve out a low volumn queue.
+/// should have over other. This way you can ensure a given high volume 
+/// queue does not starve out a low volume queue.
 /// The default queue is "default" when one is not provided.
 /// The original subject of the message.
 func (rcv *RequeueMessage) OriginalSubject() []byte {
@@ -201,8 +201,8 @@ func RequeueMessageAddDelay(builder *flatbuffers.Builder, delay uint64) {
 func RequeueMessageAddBackoffStrategy(builder *flatbuffers.Builder, backoffStrategy BackoffStrategy) {
 	builder.PrependInt8Slot(3, int8(backoffStrategy), 0)
 }
-func RequeueMessageAddPersistenceQueue(builder *flatbuffers.Builder, persistenceQueue flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(persistenceQueue), 0)
+func RequeueMessageAddQueueName(builder *flatbuffers.Builder, queueName flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(queueName), 0)
 }
 func RequeueMessageAddOriginalSubject(builder *flatbuffers.Builder, originalSubject flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(originalSubject), 0)

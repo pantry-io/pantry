@@ -12,6 +12,7 @@ import (
 	"github.com/nickpoorman/nats-requeue/flatbuf"
 	"github.com/nickpoorman/nats-requeue/internal/queue"
 	"github.com/nickpoorman/nats-requeue/internal/republisher"
+	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
@@ -527,9 +528,10 @@ func (c *Conn) newMessageQueueKey(msg *nats.Msg, fb *flatbuf.RequeueMessage) (qu
 		}
 		return queue.QueueKey{}, err
 	}
+
 	qk := queue.QueueKey{
 		Namespace: queue.QueuesNamespace,
-		Name:      string(fb.PersistenceQueue()),
+		Name:      protocol.GetQueueName(fb),
 		Bucket:    queue.MessagesBucket,
 		Property:  kuid.String(),
 	}

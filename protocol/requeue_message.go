@@ -1,4 +1,4 @@
-package requeue
+package protocol
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
 )
+
+const DefaultQueueName = "default"
 
 // BackoffStrategy mirrors the flatbuf enum.
 type BackoffStrategy int8
@@ -41,6 +43,14 @@ type RequeueMessage struct {
 	// exponential
 	BackoffStrategy BackoffStrategy
 
+	// The persistence queue events will be stored in.
+	// This can be useful if you need multiple queues by priority.
+	// On the sever you can configure the priority certain queues
+	// should have over other. This way you can ensure a given high volume
+	// queue does not starve out a low volume queue.
+	// The default queue is "default" when one is not provided.
+	QueueName string
+
 	// The original subject of the message.
 	OriginalSubject string
 
@@ -50,6 +60,7 @@ type RequeueMessage struct {
 
 func DefaultRequeueMessage() RequeueMessage {
 	return RequeueMessage{
+		QueueName:       DefaultQueueName,
 		BackoffStrategy: BackoffStrategy_Undefined,
 	}
 }
@@ -83,6 +94,7 @@ func (r *RequeueMessage) UnmarshalBinary(data []byte) error {
 }
 
 func (r *RequeueMessage) toFlatbuf(b *flatbuffers.Builder) flatbuffers.UOffsetT {
+	queueName := b.CreateByteString([]byte(r.QueueName))
 	originalSubject := b.CreateByteString([]byte(r.OriginalSubject))
 	originalPayload := b.CreateByteVector(r.OriginalPayload)
 
@@ -91,6 +103,7 @@ func (r *RequeueMessage) toFlatbuf(b *flatbuffers.Builder) flatbuffers.UOffsetT 
 	flatbuf.RequeueMessageAddTtl(b, r.TTL)
 	flatbuf.RequeueMessageAddDelay(b, r.Delay)
 	flatbuf.RequeueMessageAddBackoffStrategy(b, r.backoffStrategyToFlatbuf())
+	flatbuf.RequeueMessageAddQueueName(b, queueName)
 	flatbuf.RequeueMessageAddOriginalSubject(b, originalSubject)
 	flatbuf.RequeueMessageAddOriginalPayload(b, originalPayload)
 	return flatbuf.RequeueMessageEnd(b)
@@ -101,6 +114,7 @@ func (r *RequeueMessage) fromFlatbuf(m *flatbuf.RequeueMessage) {
 	r.TTL = m.Ttl()
 	r.Delay = m.Delay()
 	r.BackoffStrategy = BackoffStrategy(m.BackoffStrategy())
+	r.QueueName = string(m.QueueName())
 	r.OriginalSubject = string(m.OriginalSubject())
 	r.OriginalPayload = m.OriginalPayloadBytes()
 }
@@ -110,6 +124,14 @@ func (r *RequeueMessage) backoffStrategyToFlatbuf() flatbuf.BackoffStrategy {
 		return flatbuf.BackoffStrategyUndefined
 	}
 	return flatbuf.BackoffStrategy(r.BackoffStrategy)
+}
+
+func GetQueueName(fb *flatbuf.RequeueMessage) string {
+	name := string(fb.QueueName())
+	if name == "" {
+		return DefaultQueueName
+	}
+	return name
 }
 
 var (
