@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -39,7 +40,7 @@ func setup(t *testing.T) string {
 }
 
 func Test_RequeueConnect(t *testing.T) {
-	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	zerolog.SetGlobalLevel(zerolog.NoLevel)
 	done := true
 
 	s := natsserver.RunDefaultServer()
@@ -130,7 +131,7 @@ func Test_RequeueConnect(t *testing.T) {
 	}()
 
 	// Send some events for requeue to persist
-	for i := 0; i < 10000; i++ { // Throttle in flight requests
+	for i := 0; i < runtime.NumCPU(); i++ { // Throttle in flight requests
 		group.Go(func(i int) func() error {
 			return func() error {
 				for i := range ch {
