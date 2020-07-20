@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	requeue "github.com/nickpoorman/nats-requeue"
+	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 )
@@ -80,10 +80,10 @@ func main() {
 }
 
 func buildPayload(i int) []byte {
-	msg := requeue.DefaultRequeueMessage()
+	msg := protocol.DefaultRequeueMessage()
 	msg.OriginalSubject = "foo.bar.baz"
 	msg.OriginalPayload = []byte(fmt.Sprintf("my awesome payload %d", i))
-	msg.BackoffStrategy = requeue.BackoffStrategy_Exponential
+	msg.BackoffStrategy = protocol.BackoffStrategy_Exponential
 	msg.Delay = uint64(1 * time.Nanosecond)
 	msg.Retries = 1
 	return msg.Bytes()

@@ -3,17 +3,17 @@ package requeue_test
 import (
 	"testing"
 
-	requeue "github.com/nickpoorman/nats-requeue"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
+	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestRequeueMessage_FlatbufMutate(t *testing.T) {
-	msg := requeue.DefaultRequeueMessage()
+	msg := protocol.DefaultRequeueMessage()
 	msg.Retries = 5
 	msg.TTL = 10000
 	msg.Delay = 20000
-	msg.BackoffStrategy = requeue.BackoffStrategy_Exponential
+	msg.BackoffStrategy = protocol.BackoffStrategy_Exponential
 	msg.OriginalSubject = "foo.bar"
 	msg.OriginalPayload = []byte("my awesome message")
 
