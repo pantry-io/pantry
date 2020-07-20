@@ -40,6 +40,7 @@ func setup(t *testing.T) string {
 
 func Test_RequeueConnect(t *testing.T) {
 	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	done := true
 
 	s := natsserver.RunDefaultServer()
 	// defaultOpts := natsserver.DefaultTestOptions
@@ -84,7 +85,9 @@ func Test_RequeueConnect(t *testing.T) {
 	nc, err := nats.Connect(
 		clientURL,
 		nats.DisconnectErrHandler(func(con *nats.Conn, err error) {
-			t.Error(fmt.Errorf("nats-producer: DisconnectErrHandler: %w", err))
+			if !done {
+				t.Errorf("nats-producer: DisconnectErrHandler: %s", err.Error())
+			}
 		}),
 		nats.ReconnectHandler(func(con *nats.Conn) {
 			t.Logf("nats-producer: Got reconnected to %s!", con.ConnectedUrl())
@@ -184,6 +187,8 @@ func Test_RequeueConnect(t *testing.T) {
 
 	// Wait for all the messages to have been republished
 	republishedWG.Wait()
+
+	done = true
 
 	cancel()
 
