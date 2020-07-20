@@ -48,7 +48,7 @@ serialize messages. To build the `protocol/*.fbs` files you must have `flatc`
 installed and then run the following.
 
 ```
-make flatc
+make protocol
 ```
 
 ## Thanks
