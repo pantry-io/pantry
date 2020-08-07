@@ -2,18 +2,8 @@ package queue
 
 import (
 	"fmt"
-	"strings"
-)
 
-// --------------------------------------------------------------------------
-// KSUID
-
-const (
-	// A string-encoded minimum value for a KSUID
-	minStringEncoded = "000000000000000000000000000"
-
-	// A string-encoded maximum value for a KSUID
-	maxStringEncoded = "aWgEPTl1tmebfsQzFP4bxwgy80V"
+	"github.com/nickpoorman/nats-requeue/internal/key"
 )
 
 // --------------------------------------------------------------------------
@@ -29,27 +19,32 @@ const (
 // _q._s.medium.checkpoint
 // _q._s.low.checkpoint
 // _q._s.low.other_state_property
-const sep = "."
-const QueuesNamespace = "_q"
 
-const MessagesBucket = "_m"
-
-const StateBucket = "_s"
-const CheckpointProperty = "checkpoint"
+const (
+	sep                = "."
+	QueuesNamespace    = "_q"
+	namespaceKeyBytes  = 2
+	bucketKeyBytes     = 2
+	MessagesBucket     = "_m"
+	StateBucket        = "_s"
+	CheckpointProperty = "checkpoint"
+)
 
 type QueueKey struct {
 	Namespace string
 	Bucket    string
 	Name      string
-	Property  string
+
+	Property string
+	Key      key.Key
 }
 
-func NewQueueKeyForMessage(queue, property string) QueueKey {
+func NewQueueKeyForMessage(queue string, key key.Key) QueueKey {
 	return QueueKey{
 		Namespace: QueuesNamespace,
 		Bucket:    MessagesBucket,
 		Name:      queue,
-		Property:  property,
+		Key:       key,
 	}
 }
 
@@ -63,17 +58,37 @@ func NewQueueKeyForState(queue, property string) QueueKey {
 }
 
 func ParseQueueKey(k []byte) QueueKey {
-	spl := strings.Split(string(k), sep)
 	return QueueKey{
-		Namespace: spl[0],
-		Bucket:    spl[1],
-		Name:      spl[2],
-		Property:  spl[3],
+		// TODO: Don't hard code these lengths.
+		// Iterate over bytes and look for delimiters.
+		// Namespace: string(k[0:2]),
+		Namespace: string(k[0:namespaceKeyBytes]),
+		Bucket:    string(k[namespaceKeyBytes : namespaceKeyBytes+bucketKeyBytes]),
+		Name:      string(k[namespaceKeyBytes+bucketKeyBytes : len(k)-key.Size]),
+		Key:       k[len(k)-key.Size:],
 	}
 }
 
+func (q QueueKey) IsKey() bool {
+	return q.Key != nil
+}
+
 func (q QueueKey) Bytes() []byte {
-	return []byte(q.PropertyPath())
+	ns := []byte(q.Namespace)
+	bk := []byte(q.Bucket)
+	na := []byte(q.Name)
+	var p []byte
+	if q.IsKey() {
+		p = q.Key
+	} else {
+		p = []byte(q.Property)
+	}
+	qk := make([]byte, len(ns)+len(bk)+len(na)+len(p))
+	off := copy(qk, ns)
+	off += copy(qk[off:], bk)
+	off += copy(qk[off:], na)
+	copy(qk[off:], p)
+	return qk
 }
 
 func (q QueueKey) BucketPath() string {
@@ -85,7 +100,14 @@ func (q QueueKey) NamePath() string {
 }
 
 func (q QueueKey) PropertyPath() string {
-	return fmt.Sprintf("%s.%s.%s.%s", q.Namespace, q.Bucket, q.Name, q.Property)
+	return fmt.Sprintf("%s.%s.%s.%s", q.Namespace, q.Bucket, q.Name, q.PropertyString())
+}
+
+func (q QueueKey) PropertyString() string {
+	if q.IsKey() {
+		return q.Key.Print()
+	}
+	return string(q.Property)
 }
 
 // PrefixOf a common prefix between two keys (common leading bytes) which is
@@ -111,12 +133,12 @@ func PrefixOf(seek, until []byte) []byte {
 
 // FirstMessage returns the smallest possible key given the queue.
 func FirstMessage(queue string) QueueKey {
-	return NewQueueKeyForMessage(queue, minStringEncoded)
+	return NewQueueKeyForMessage(queue, key.Min)
 }
 
 // LastMessage returns the largest possible key given the queue.
 func LastMessage(queue string) QueueKey {
-	return NewQueueKeyForMessage(queue, maxStringEncoded)
+	return NewQueueKeyForMessage(queue, key.Max)
 }
 
 // ---------------------------------------------------------------------------

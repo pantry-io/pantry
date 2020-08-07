@@ -1,12 +1,42 @@
-package queue_test
+package queue
 
-// func Test_Bytes(t *testing.T) {
-// 	uid := ksuid.New()
-// 	k1 := queues.NewQueueKeyForMessage("high", uid.String())
+import (
+	"bytes"
+	"testing"
+	"time"
 
-// 	k2 := queues.FromParts([]byte(k1.NamePath()), uid)
+	"github.com/nickpoorman/nats-requeue/internal/key"
+	"github.com/stretchr/testify/assert"
+)
 
-// 	if !bytes.Equal(k1.Bytes(), k2.Bytes()) {
-// 		t.Errorf("k1 != k2 | k1=%+v k2=%+v", k1.Bytes(), k2.Bytes())
-// 	}
-// }
+func TestBytesSortable(t *testing.T) {
+	queueName := "testqueue"
+	t1 := time.Unix(1, 100)
+	k1 := key.New(t1)
+	k2 := key.New(t1)
+	qk1 := NewQueueKeyForMessage(queueName, k1)
+	qk2 := NewQueueKeyForMessage(queueName, k2)
+
+	assert.Equal(t, -1, bytes.Compare(qk1.Bytes(), qk2.Bytes()), "qk1 should be less than qk2")
+}
+
+func TestParseQueueKey(t *testing.T) {
+	// Create a key
+	queueName := "testqueue"
+	t1 := time.Unix(1, 100)
+	k1 := key.New(t1)
+	qk1 := NewQueueKeyForMessage(queueName, k1)
+
+	qk1.PropertyPath()
+
+	// Get bytes
+	by := qk1.Bytes()
+
+	// Parse the bytes
+	qk2 := ParseQueueKey(by)
+
+	assert.Equal(t, QueuesNamespace, qk2.Namespace, "qk2 namespace should be correct")
+	assert.Equal(t, MessagesBucket, qk2.Bucket, "qk2 namespace should be correct")
+	assert.Equal(t, queueName, qk2.Name, "qk2 name should be testqueue")
+	assert.Equal(t, k1, qk2.Key, "qk2 name should be testqueue")
+}

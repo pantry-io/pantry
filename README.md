@@ -41,6 +41,16 @@ TODO
 
 TODO
 
+## How Requeue Works
+
+All queue meta information is kept in memory and synced to disk.
+
+**Checkpointing**
+
+In memory meta for a queue consists of a Checkpoint. The checkpoint is used for
+seeking to the a key in Badger. This allows us to iterate directly between the
+events we are looking for in a time range.
+
 ## Contributing
 
 This project uses [Flatbuffers](https://github.com/google/flatbuffers) to

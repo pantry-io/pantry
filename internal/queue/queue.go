@@ -7,8 +7,8 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
+	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/rs/zerolog/log"
-	"github.com/segmentio/ksuid"
 )
 
 type Checkpoint []byte
@@ -92,7 +92,7 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	switch qk.Property {
+	switch qk.PropertyString() {
 	case CheckpointProperty: // queues.high.checkpoint
 		q.checkpoint = v
 	default:
@@ -139,6 +139,9 @@ func (qi QueueItem) DurationUntilExpires() time.Duration {
 // each key and value present in the store. If f returns false, range stops the
 // iteration. The implementation must guarantee that the keys are
 // lexigraphically sorted.
+// The checkpoint returned will either be the original seek passed to this
+// function or the last successfully processed key. If f returns false, the key
+// for that iterantion will not be the checkpoint.
 func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) (Checkpoint, error) {
 	checkpoint := seek.Bytes()
 	err := q.db.View(func(tx *badger.Txn) error {
@@ -176,7 +179,7 @@ func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) (Checkpoint,
 
 			key := item.KeyCopy(nil)
 			if bytes.Compare(key, until.Bytes()) > 0 {
-				return nil // Stop if we're reached the end
+				return nil // Stop if we've reached the end
 			}
 
 			// Fetch the value
@@ -202,19 +205,43 @@ func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) (Checkpoint,
 // ReadFromCheckpoint should begin reading in all the events from the checkpoint
 // up until the provided Time.
 func (q *Queue) ReadFromCheckpoint(until time.Time, f func(QueueItem) bool) (Checkpoint, error) {
-	uid, err := ksuid.NewRandomWithTime(until)
-	if err != nil {
-		return nil, err
-	}
 	q.mu.RLock()
 	name := q.name
 	checkpoint := q.checkpoint
 	q.mu.RUnlock()
 
-	untilQK := NewQueueKeyForMessage(name, uid.String())
+	untilQK := NewQueueKeyForMessage(name, key.New(until))
 	log.Debug().
 		Str("queue", name).
 		Str("checkpoint", checkpoint.String()).
 		Msg("Queue: ReadFromCheckpoint: calling range")
 	return q.Range(ParseQueueKey(checkpoint), untilQK, f)
+}
+
+// EarliestCheckpoint will return the earliest Checkpoint up until the specified time.
+// It does this by looking for the earliest message that has not been deleted.
+func (q *Queue) EarliestCheckpoint(until time.Time) (Checkpoint, error) {
+	q.mu.RLock()
+	name := q.name
+	checkpoint := q.checkpoint
+	q.mu.RUnlock()
+
+	untilQK := NewQueueKeyForMessage(name, key.New(until))
+	log.Debug().
+		Str("queue", name).
+		Str("checkpoint", checkpoint.String()).
+		Msg("Queue: ReadFromCheckpoint: calling range")
+
+	first := true
+	return q.Range(FirstMessage(name), untilQK, func(qi QueueItem) bool {
+		// We have to do two iterations because Range returns the last
+		// checkpoint that this callback returned true for.
+		if first {
+			first = false
+			// continue
+			return true
+		} else {
+			return false
+		}
+	})
 }

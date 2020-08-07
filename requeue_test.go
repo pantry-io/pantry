@@ -178,14 +178,6 @@ func Test_RequeueConnect(t *testing.T) {
 	// log.Info().Int64("pending", pending).Msg("left terminated")
 	t.Logf("pending: %d", pending)
 
-	// TODO: Verify the events were written to disk
-
-	// TODO:
-	// 1. Shut down the requeue instance
-	// 2. Then start it back up
-	// 3. Spin up a consumer on the original subject
-	// 4. Verify we get the requeued messages.
-
 	// Wait for all the messages to have been republished
 	republishedWG.Wait()
 

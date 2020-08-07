@@ -10,12 +10,12 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
+	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/nickpoorman/nats-requeue/internal/queue"
 	"github.com/nickpoorman/nats-requeue/internal/republisher"
 	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/segmentio/ksuid"
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/dgraph-io/badger/v2/y"
@@ -519,23 +519,10 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 }
 
 func (c *Conn) newMessageQueueKey(msg *nats.Msg, fb *flatbuf.RequeueMessage) (queue.QueueKey, error) {
-	delay := time.Now().Add(time.Duration(fb.Delay()))
-	kuid, err := ksuid.NewRandomWithTime(delay)
-	if err != nil {
-		log.Err(err).Msg("problem creating a new key")
-		if c.Opts.BadgerWriteMsgErr != nil {
-			c.Opts.BadgerWriteMsgErr(msg, err)
-		}
-		return queue.QueueKey{}, err
-	}
-
-	qk := queue.QueueKey{
-		Namespace: queue.QueuesNamespace,
-		Name:      protocol.GetQueueName(fb),
-		Bucket:    queue.MessagesBucket,
-		Property:  kuid.String(),
-	}
-	return qk, nil
+	return queue.NewQueueKeyForMessage(
+		protocol.GetQueueName(fb),
+		key.New(time.Now().Add(time.Duration(fb.Delay()))),
+	), nil
 }
 
 // A commit from batchedWriter will trigger a batch of callbacks,

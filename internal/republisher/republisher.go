@@ -8,10 +8,10 @@ import (
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
+	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/nickpoorman/nats-requeue/internal/queue"
 	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog/log"
-	"github.com/segmentio/ksuid"
 )
 
 const DefaultACKTimeout = 15 * time.Second
@@ -62,8 +62,6 @@ func (rp *Republisher) initBackgroundTasks() {
 				rp.republish()
 			case <-rp.quit:
 				ticker.Stop()
-				// TODO: Cancel anything thats currently trying to republish but
-				// hasn't sent the Request yet.
 				return
 			}
 		}
@@ -77,6 +75,7 @@ func (rp *Republisher) Close() {
 
 // republish check all the queues for new messages
 // that are ready to be sent and trigger a publish for any that are.
+// This is called in a loop on an interval.
 func (rp *Republisher) republish() {
 	log.Debug().Msg("republisher: republish: triggered.")
 	rp.mu.Lock()
@@ -99,20 +98,21 @@ func (rp *Republisher) republish() {
 		close(ch)
 	}()
 
-	now := time.Now() // Read up until now
+	maxTimeToRead := time.Now() // Read up until now.
 	for _, que := range qs {
 		go func(q *queue.Queue) {
 			defer wg.Done()
 			log.Debug().Msgf("republisher: republish: processing queue: %s", q.Name())
-			// TOOD: If rp.quit is closed, we should stop this early and checkpoint where we're at.
-			checkpoint, err := q.ReadFromCheckpoint(now, func(qi queue.QueueItem) bool {
-				log.Debug().Msg("republisher: republish: processing queue item")
-
-				// TODO(nickpoorman): This is blocking the transaction from
-				// being able to close. If this becomes an issue,
-				// may need to buffer these up.
-				ch <- qi
-				return true
+			checkpoint, err := q.ReadFromCheckpoint(maxTimeToRead, func(qi queue.QueueItem) bool {
+				// Note: This function is blocking the Badger transaction from closing.
+				select {
+				// If rp.quit is closed, we stop this early and checkpoint where we're at.
+				case <-rp.quit:
+					return false
+				case ch <- qi:
+					log.Debug().Msg("republisher: republish: processing queue item")
+					return true
+				}
 			})
 			if err != nil {
 				log.Err(err).Msg("called to ReadFromCheckpoint failed")
@@ -167,7 +167,7 @@ func (rp *Republisher) republish() {
 	}
 }
 
-// TODO: Requeue the message to disk for a future time.
+// Requeue the message to disk for a future time.
 func (rp *Republisher) requeueMessageToDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) {
 	// TODO: If this process were to shut off before we requeue to disk,
 	// we could end up with data on disk that is zombied and won't be picked up
@@ -216,12 +216,7 @@ func (rp *Republisher) createEntry(qi queue.QueueItem, fb *flatbuf.RequeueMessag
 	// TODO: We need to change the delay based on the BackoffStrategy.
 	// for now we'll just do fixed backoff.
 	delay := time.Now().Add(time.Duration(fb.Delay()))
-	kuid, err := ksuid.NewRandomWithTime(delay)
-	if err != nil {
-		log.Err(err).Msg("problem creating a new ksuid")
-		return nil, err
-	}
-	qk := queue.NewQueueKeyForMessage(protocol.GetQueueName(fb), kuid.String())
+	qk := queue.NewQueueKeyForMessage(protocol.GetQueueName(fb), key.New(delay))
 
 	// Update the message with the new retry count, ttl, etc.
 	if err := adjMsgBeforeRequeueToDisk(qi, fb); err != nil {
