@@ -72,10 +72,10 @@ func TestEarliestCheckpoint(t *testing.T) {
 	}
 
 	// Set the checkpoint to the second to last one
-	// secondToLastKey := keys[8]
-	// if err := q.UpdateCheckpoint(secondToLastKey.Bytes()); err != nil {
-	// 	t.Fatal(err)
-	// }
+	secondToLastKey := keys[8]
+	if err := q.UpdateCheckpoint(secondToLastKey.Bytes()); err != nil {
+		t.Fatal(err)
+	}
 
 	// Now search for the earliest Checkpoint
 	earliest, err := q.EarliestCheckpoint(time.Now())
@@ -84,7 +84,3 @@ func TestEarliestCheckpoint(t *testing.T) {
 	}
 	assert.Equal(t, keys[0].PropertyPath(), ParseQueueKey(earliest).PropertyPath(), "they should be equal")
 }
-
-// func TestEarliestCheckpoint(t *testing.T) {
-
-// }

@@ -152,27 +152,27 @@ func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) (Checkpoint,
 		defer it.Close()
 
 		log.Debug().
-			Str("seek", string(seek.Bytes())).
-			Str("until", string(until.Bytes())).
-			Str("prefix", string(opts.Prefix)).
+			Str("seek", seek.String()).
+			Str("until", until.String()).
+			Bytes("prefix", opts.Prefix).
 			Msg("Queue: Range: starting iterator")
 
 		// Seek the prefix and check the key so we can quickly exit the iteration.
 		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
 			item := it.Item()
 			log.Debug().
-				Str("seek", string(seek.Bytes())).
-				Str("until", string(until.Bytes())).
-				Str("prefix", string(opts.Prefix)).
-				Str("item.Key", string(item.Key())).
+				Str("seek", seek.String()).
+				Str("until", until.String()).
+				Bytes("prefix", opts.Prefix).
+				Str("item.Key", ParseQueueKey(item.Key()).String()).
 				Msg("Queue: Range: iterator: got item")
 
 			if item.IsDeletedOrExpired() { // Not sure if this is necessary.
 				log.Debug().
-					Str("seek", string(seek.Bytes())).
-					Str("until", string(until.Bytes())).
-					Str("prefix", string(opts.Prefix)).
-					Str("item.Key", string(item.Key())).
+					Str("seek", seek.String()).
+					Str("until", until.String()).
+					Bytes("prefix", opts.Prefix).
+					Str("item.Key", ParseQueueKey(item.Key()).String()).
 					Msg("Queue: Range: iterator: item is expired")
 				continue
 			}
@@ -189,8 +189,8 @@ func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) (Checkpoint,
 			}
 			if !f(QueueItem{K: key, V: value, ExpiresAt: item.ExpiresAt()}) {
 				log.Debug().
-					Str("seek", string(seek.Bytes())).
-					Str("until", string(until.Bytes())).
+					Str("seek", seek.String()).
+					Str("until", until.String()).
 					Str("prefix", string(opts.Prefix)).
 					Msg("Queue: Range: callback returned false. Stopping range.")
 				return nil
@@ -213,7 +213,7 @@ func (q *Queue) ReadFromCheckpoint(until time.Time, f func(QueueItem) bool) (Che
 	untilQK := NewQueueKeyForMessage(name, key.New(until))
 	log.Debug().
 		Str("queue", name).
-		Str("checkpoint", checkpoint.String()).
+		Str("checkpoint", ParseQueueKey(checkpoint).String()).
 		Msg("Queue: ReadFromCheckpoint: calling range")
 	return q.Range(ParseQueueKey(checkpoint), untilQK, f)
 }
@@ -229,7 +229,7 @@ func (q *Queue) EarliestCheckpoint(until time.Time) (Checkpoint, error) {
 	untilQK := NewQueueKeyForMessage(name, key.New(until))
 	log.Debug().
 		Str("queue", name).
-		Str("checkpoint", checkpoint.String()).
+		Str("checkpoint", ParseQueueKey(checkpoint).String()).
 		Msg("Queue: ReadFromCheckpoint: calling range")
 
 	first := true

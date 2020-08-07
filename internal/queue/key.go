@@ -110,6 +110,10 @@ func (q QueueKey) PropertyString() string {
 	return string(q.Property)
 }
 
+func (q QueueKey) String() string {
+	return q.PropertyPath()
+}
+
 // PrefixOf a common prefix between two keys (common leading bytes) which is
 // then used as a prefix for Badger to narrow down SSTables to traverse.
 func PrefixOf(seek, until []byte) []byte {
