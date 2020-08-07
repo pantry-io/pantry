@@ -14,7 +14,7 @@ import (
 type Checkpoint []byte
 
 func (c Checkpoint) String() string {
-	return string(c)
+	return ParseQueueKey(c).String()
 }
 
 type Queue struct {
@@ -57,11 +57,35 @@ func (q *Queue) Name() string {
 	return q.name
 }
 
+// CompareCheckpoint will compare the passed checkpoint to the existign for the
+// queue.
+// The result will be 0 if q==b, -1 if q < b, and +1 if q > b.
+func (q *Queue) CompareCheckpoint(b Checkpoint) int {
+	return bytes.Compare(q.checkpoint, b)
+}
+
 // UpdateCheckpoint will update the checkpoint for this queue.
 func (q *Queue) UpdateCheckpoint(checkpoint Checkpoint) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	return q.updateCheckpoint(checkpoint)
+}
 
+// UpdateCheckpointCond will update the checkpoint if the passed in cond
+// callback returns true.
+func (q *Queue) UpdateCheckpointCond(checkpoint Checkpoint, cond func(Checkpoint) bool) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if cond != nil {
+		if !cond(q.checkpoint) {
+			return nil
+		}
+	}
+	return q.updateCheckpoint(checkpoint)
+}
+
+// This must be called with a lock acquired.
+func (q *Queue) updateCheckpoint(checkpoint Checkpoint) error {
 	if err := q.saveCheckpoint(checkpoint); err != nil {
 		return err
 	}
@@ -213,7 +237,7 @@ func (q *Queue) ReadFromCheckpoint(until time.Time, f func(QueueItem) bool) (Che
 	untilQK := NewQueueKeyForMessage(name, key.New(until))
 	log.Debug().
 		Str("queue", name).
-		Str("checkpoint", ParseQueueKey(checkpoint).String()).
+		Str("checkpoint", checkpoint.String()).
 		Msg("Queue: ReadFromCheckpoint: calling range")
 	return q.Range(ParseQueueKey(checkpoint), untilQK, f)
 }
@@ -229,7 +253,7 @@ func (q *Queue) EarliestCheckpoint(until time.Time) (Checkpoint, error) {
 	untilQK := NewQueueKeyForMessage(name, key.New(until))
 	log.Debug().
 		Str("queue", name).
-		Str("checkpoint", ParseQueueKey(checkpoint).String()).
+		Str("checkpoint", checkpoint.String()).
 		Msg("Queue: ReadFromCheckpoint: calling range")
 
 	first := true

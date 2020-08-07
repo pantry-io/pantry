@@ -16,6 +16,8 @@ import (
 
 const DefaultACKTimeout = 15 * time.Second
 
+var CheckpointCorrectionInterval = 60 * time.Second
+
 type Republisher struct {
 	db       *badger.DB
 	qManager *queue.Manager
@@ -46,7 +48,7 @@ func New(nc *nats.Conn, db *badger.DB, qManager *queue.Manager, pubInterval time
 
 func (rp *Republisher) initBackgroundTasks() {
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		wg.Wait()
 		close(rp.done)
@@ -60,6 +62,24 @@ func (rp *Republisher) initBackgroundTasks() {
 			select {
 			case <-ticker.C:
 				rp.republish()
+			case <-rp.quit:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
+	// Our checkpoint is optimistic. To solve the checkpoint getting ahead of
+	// our data, we have a task that runs every now and then checks for messages
+	// that are not marked as deleted, but are before our checkpoint. If we find
+	// any messages before our checkpoint we will reset the checkpoint.
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(CheckpointCorrectionInterval)
+		for {
+			select {
+			case <-ticker.C:
+				rp.correctCheckpoint()
 			case <-rp.quit:
 				ticker.Stop()
 				return
@@ -115,7 +135,7 @@ func (rp *Republisher) republish() {
 				}
 			})
 			if err != nil {
-				log.Err(err).Msg("called to ReadFromCheckpoint failed")
+				log.Err(err).Msg("call to ReadFromCheckpoint failed")
 				return
 			}
 			log.Debug().Msgf("republisher: republish: processed queue: %s. Updating checkpoint: %s", q.Name(), checkpoint.String())
@@ -248,4 +268,47 @@ func adjMsgBeforeRequeueToDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) e
 		}
 	}
 	return nil
+}
+
+// TODO: Write a test for this.
+func (rp *Republisher) correctCheckpoint() {
+	// Grab the earliest checkpoint.
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+
+	qs := rp.qManager.Queues()
+	log.Debug().Msgf("republisher: correctCheckpoint: number of queues to process: %d", len(qs))
+
+	if len(qs) == 0 {
+		// If there are no queues then there is nothing for us to do.
+		return
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(len(qs))
+
+	untilNow := time.Now()
+
+	for _, que := range qs {
+		go func(q *queue.Queue) {
+			defer wg.Done()
+			log.Debug().Msgf("republisher: correctCheckpoint: processing queue: %s", q.Name())
+			checkpoint, err := q.EarliestCheckpoint(untilNow)
+			if err != nil {
+				log.Err(err).Msg("call to EarliestCheckpoint failed")
+				return
+			}
+
+			log.Debug().Msgf("republisher: correctCheckpoint: processed queue: %s. Updating checkpoint: %s", q.Name(), checkpoint.String())
+			// Update the checkpoint
+			if err := q.UpdateCheckpointCond(checkpoint, func(cp queue.Checkpoint) bool {
+				return q.CompareCheckpoint(checkpoint) == 1
+			}); err != nil {
+				log.Err(err).Msg("call to UpdateCheckpoint failed")
+				return
+			}
+		}(que)
+	}
+
+	wg.Wait()
 }
