@@ -147,6 +147,7 @@ func (rp *Republisher) republish() {
 		}(que)
 	}
 
+	// TODO: This is doing 1 request at a time. We may want to bump this up with go routines + a limiter.
 	for qi := range ch {
 		fb := flatbuf.GetRootAsRequeueMessage(qi.V, 0)
 
