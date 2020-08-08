@@ -47,8 +47,6 @@ const (
 	keySeperator byte = '.'
 
 	DefaultNumConcurrentBatchTransactions = 4
-
-	DefaultRepublisherInterval = 15 * time.Second
 )
 
 func Connect(options ...Option) (*Conn, error) {
@@ -77,7 +75,7 @@ func ConnectContext(ctx context.Context) Option {
 // NATSServers is the nats server URLs (separated by comma).
 func NATSServers(natsServers string) Option {
 	return func(o *Options) error {
-		o.NatsServers = natsServers
+		o.natsServers = natsServers
 		return nil
 	}
 }
@@ -89,7 +87,7 @@ func NATSServers(natsServers string) Option {
 // E.g. 'foo.>' will match 'foo.bar', 'foo.bar.baz', 'foo.foo.bar.bax.22'.
 func NATSSubject(natsSubject string) Option {
 	return func(o *Options) error {
-		o.NatsSubject = natsSubject
+		o.natsSubject = natsSubject
 		return nil
 	}
 }
@@ -98,7 +96,7 @@ func NATSSubject(natsSubject string) Option {
 // distributed amongst the the subscribers of the queue.
 func NATSQueueName(natsQueueName string) Option {
 	return func(o *Options) error {
-		o.NatsQueueName = natsQueueName
+		o.natsQueueName = natsQueueName
 		return nil
 	}
 }
@@ -107,7 +105,7 @@ func NATSQueueName(natsQueueName string) Option {
 // connection.
 func NATSOptions(natsOptions []nats.Option) Option {
 	return func(o *Options) error {
-		o.NatsOptions = natsOptions
+		o.natsOptions = append(o.natsOptions, natsOptions...)
 		return nil
 	}
 }
@@ -116,7 +114,7 @@ func NATSOptions(natsOptions []nats.Option) Option {
 // established.
 func NATSConnectionError(connErrCb func(*Conn, error)) Option {
 	return func(o *Options) error {
-		o.NatsConnErrCB = connErrCb
+		o.natsConnErrCB = connErrCb
 		return nil
 	}
 }
@@ -124,7 +122,7 @@ func NATSConnectionError(connErrCb func(*Conn, error)) Option {
 // BadgerDataPath sets the context to be used for connect.
 func BadgerDataPath(path string) Option {
 	return func(o *Options) error {
-		o.BadgerDataPath = path
+		o.badgerDataPath = path
 		return nil
 	}
 }
@@ -133,51 +131,59 @@ func BadgerDataPath(path string) Option {
 // writing a message to Badger.
 func BadgerWriteMsgErr(cb func(*nats.Msg, error)) Option {
 	return func(o *Options) error {
-		o.BadgerWriteMsgErr = cb
+		o.badgerWriteMsgErr = cb
 		return nil
 	}
 }
 
-// RepublisherInterval sets interval in which to trigger the republisher.
-// This is the interval in which requeue will look for messages that are ready to be republished.
-// The smaller this number is, the greater the number of possible disk reads.
-func RepublisherInterval(interval time.Duration) Option {
+// // RepublisherInterval sets interval in which to trigger the republisher.
+// // This is the interval in which requeue will look for messages that are ready to be republished.
+// // The smaller this number is, the greater the number of possible disk reads.
+// func RepublisherInterval(interval time.Duration) Option {
+// 	return func(o *Options) error {
+// 		o.republisherOpts = append(o.republisherOpts, republisher.RepublishInterval(interval))
+// 		return nil
+// 	}
+// }
+
+// RepublisherOpts sets the options for the republisher.
+func RepublisherOptions(options ...republisher.Option) Option {
 	return func(o *Options) error {
-		o.RepublisherInterval = interval
+		o.republisherOpts = append(o.republisherOpts, options...)
 		return nil
 	}
 }
 
+// TODO: These options should probably be lower case so they are private.
 // Options can be used to create a customized Service connections.
 type Options struct {
 	ctx context.Context
 
 	// Nats
-	NatsServers   string
-	NatsSubject   string
-	NatsQueueName string
-	NatsOptions   []nats.Option
-	NatsConnErrCB func(*Conn, error)
+	natsServers   string
+	natsSubject   string
+	natsQueueName string
+	natsOptions   []nats.Option
+	natsConnErrCB func(*Conn, error)
 
 	// Badger
-	BadgerDataPath    string
-	BadgerWriteMsgErr func(*nats.Msg, error)
+	badgerDataPath    string
+	badgerWriteMsgErr func(*nats.Msg, error)
 
 	// Republisher
-	RepublisherInterval time.Duration
+	republisherOpts []republisher.Option
 }
 
 func GetDefaultOptions() Options {
 	return Options{
 		ctx:           context.Background(),
-		NatsServers:   DefaultNatsServers,
-		NatsSubject:   DefaultNatsSubject,
-		NatsQueueName: DefaultNatsQueueName,
-		NatsOptions: []nats.Option{
+		natsServers:   DefaultNatsServers,
+		natsSubject:   DefaultNatsSubject,
+		natsQueueName: DefaultNatsQueueName,
+		natsOptions: []nats.Option{
 			nats.Name(DefaultNatsClientName),
 			nats.RetryOnFailedConnect(DefaultNatsRetryOnFailure),
 		},
-		RepublisherInterval: DefaultRepublisherInterval,
 	}
 }
 
@@ -322,8 +328,8 @@ func (c *Conn) NATSReconnectHandler(nc *nats.Conn) {
 func (c *Conn) NATSClosedHandler(nc *nats.Conn) {
 	err := nc.LastError()
 	log.Err(err).Msg("nats-replay: Connection closed")
-	if c.Opts.NatsConnErrCB != nil {
-		c.Opts.NatsConnErrCB(c, err)
+	if c.Opts.natsConnErrCB != nil {
+		c.Opts.natsConnErrCB(c, err)
 	}
 
 	// Close anything left open (such as badger).
@@ -340,7 +346,7 @@ func (c *Conn) initNATS() error {
 
 	// TODO(nickpoorman): We may want to provide our own callbacks for these
 	// in case the user wants to hook into them as well.
-	o.NatsOptions = append(o.NatsOptions,
+	o.natsOptions = append(o.natsOptions,
 		nats.DisconnectErrHandler(rc.NATSDisconnectErrHandler),
 		nats.ReconnectHandler(rc.NATSReconnectHandler),
 		nats.ClosedHandler(rc.NATSClosedHandler),
@@ -348,9 +354,9 @@ func (c *Conn) initNATS() error {
 	)
 
 	// Connect to NATS
-	rc.nc, err = nats.Connect(o.NatsServers, o.NatsOptions...)
+	rc.nc, err = nats.Connect(o.natsServers, o.natsOptions...)
 	if err != nil {
-		log.Err(err).Msgf("nats-replay: unable to connec to servers: %s", o.NatsServers)
+		log.Err(err).Msgf("nats-replay: unable to connec to servers: %s", o.natsServers)
 		// Because we retry our connection, this error would be a configuration error.
 		return err
 	}
@@ -377,7 +383,7 @@ func (c *Conn) initNATS() error {
 		}
 	}()
 
-	sub, err := rc.nc.QueueSubscribe(o.NatsSubject, o.NatsQueueName, func(msg *nats.Msg) {
+	sub, err := rc.nc.QueueSubscribe(o.natsSubject, o.natsQueueName, func(msg *nats.Msg) {
 		// fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
 		// log.Debug().Str("msg", string(fb.OriginalPayloadBytes())).Msg("got message")
 		c.natsMsgCh <- msg
@@ -389,8 +395,8 @@ func (c *Conn) initNATS() error {
 	if err != nil {
 		log.Err(err).Dict("nats",
 			zerolog.Dict().
-				Str("subject", o.NatsSubject).
-				Str("queue", o.NatsQueueName)).
+				Str("subject", o.natsSubject).
+				Str("queue", o.natsQueueName)).
 			Msg("nats-replay: unable to subscribe to queue")
 		return err
 	}
@@ -410,9 +416,9 @@ func (c *Conn) initNATS() error {
 	log.Info().
 		Dict("nats",
 			zerolog.Dict().
-				Str("subject", o.NatsSubject).
-				Str("queue", o.NatsQueueName)).
-		Msgf("Listening on [%s] in queue group [%s]", o.NatsSubject, o.NatsQueueName)
+				Str("subject", o.natsSubject).
+				Str("queue", o.natsQueueName)).
+		Msgf("Listening on [%s] in queue group [%s]", o.natsSubject, o.natsQueueName)
 
 	return nil
 }
@@ -421,13 +427,13 @@ func (c *Conn) initBadger() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	openOpts := badger.DefaultOptions(c.Opts.BadgerDataPath)
+	openOpts := badger.DefaultOptions(c.Opts.badgerDataPath)
 	openOpts.Logger = badgerLogger{}
 	// Open the Badger database located in the /tmp/badger directory.
 	// It will be created if it doesn't exist.
 	db, err := badger.Open(openOpts)
 	if err != nil {
-		log.Err(err).Msgf("problem opening badger data path: %s", c.Opts.BadgerDataPath)
+		log.Err(err).Msgf("problem opening badger data path: %s", c.Opts.badgerDataPath)
 	}
 	c.badgerDB = db
 
@@ -512,8 +518,8 @@ func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
 		badger.NewEntry(qk.Bytes(), msg.Data).WithTTL(time.Duration(fb.Ttl())),
 		c.processIngressMessageCallback(msg)); err != nil {
 		log.Err(err).Msg("problem calling SetEntry on WriteBatch")
-		if c.Opts.BadgerWriteMsgErr != nil {
-			c.Opts.BadgerWriteMsgErr(msg, err)
+		if c.Opts.badgerWriteMsgErr != nil {
+			c.Opts.badgerWriteMsgErr(msg, err)
 		}
 	}
 }
@@ -568,7 +574,10 @@ func (c *Conn) initNatsProducers() error {
 	c.qManager = manager
 
 	// Create a republisher
-	c.republisher = republisher.New(c.nc, c.badgerDB, manager, c.Opts.RepublisherInterval)
+	c.republisher, err = republisher.New(c.nc, c.badgerDB, manager, c.Opts.republisherOpts...)
+	if err != nil {
+		return err
+	}
 
 	c.closers.natsProducers.AddRunning(1)
 	go func() {

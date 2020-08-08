@@ -14,6 +14,7 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	requeue "github.com/nickpoorman/nats-requeue"
+	"github.com/nickpoorman/nats-requeue/internal/republisher"
 	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/ksuid"
@@ -62,11 +63,10 @@ func Test_RequeueConnect(t *testing.T) {
 	t.Logf("running nats on: %s", clientURL)
 
 	// NATS connect Options.
-	natsOpts := requeue.GetDefaultOptions().NatsOptions
-	natsOpts = append(natsOpts, []nats.Option{
+	natsOpts := []nats.Option{
 		nats.Name(fmt.Sprintf("test_requeue_%s", t.Name())),
 		nats.MaxReconnects(10),
-	}...)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -77,7 +77,10 @@ func Test_RequeueConnect(t *testing.T) {
 		requeue.NATSServers(clientURL),
 		requeue.NATSSubject(subject),
 		requeue.NATSQueueName(requeue.DefaultNatsQueueName),
-		requeue.RepublisherInterval(1*time.Second),
+		requeue.RepublisherOptions(
+			republisher.RepublishInterval(1*time.Second),
+			// republisher.MaxInFlight(1),
+		),
 	)
 	if err != nil {
 		t.Fatalf("Error on requeue connect: %v", err)
@@ -104,7 +107,10 @@ func Test_RequeueConnect(t *testing.T) {
 		t.Fatalf("Error on connect: %v", err)
 	}
 
-	total := 100
+	var eventsMu sync.Mutex
+	events := make(map[string]struct{})
+
+	total := 1000
 	pending := int64(total)
 	group, _ := errgroup.WithContext(context.Background())
 	ch := make(chan int)
@@ -118,7 +124,14 @@ func Test_RequeueConnect(t *testing.T) {
 		if err := msg.Respond(nil); err != nil {
 			t.Fatal(fmt.Errorf("failed to respond to message: %w", err))
 		}
-		republishedWG.Done()
+		eventsMu.Lock()
+		m := string(msg.Data)
+		if _, ok := events[m]; ok {
+			delete(events, m)
+			republishedWG.Done()
+			t.Logf("replay events remaining: %d", len(events))
+		}
+		eventsMu.Unlock()
 	})
 	assert.Nil(t, err)
 
@@ -141,7 +154,12 @@ func Test_RequeueConnect(t *testing.T) {
 							t.Logf("number left: %d", left)
 						}()
 
-						msg, err := requeue.RetryRequest(nc, subject, buildPayload(i, originalSubject), 15*time.Second, 100000)
+						payload := buildPayload(i, originalSubject)
+						eventsMu.Lock()
+						events[string(payload.OriginalPayload)] = struct{}{}
+						eventsMu.Unlock()
+
+						msg, err := requeue.RetryRequest(nc, subject, payload.Bytes(), 15*time.Second, 100000)
 						if err != nil {
 							if err == requeue.RequeueRequestRetriesExceededError {
 								return err
@@ -181,14 +199,18 @@ func Test_RequeueConnect(t *testing.T) {
 	// Wait for all the messages to have been republished
 	republishedWG.Wait()
 
+	t.Log("got all messages")
+
 	done = true
 
+	t.Log("canceling requeue context")
 	cancel()
 
 	<-rc.HasBeenClosed()
+	t.Log("requeue closed")
 }
 
-func buildPayload(i int, originalSubject string) []byte {
+func buildPayload(i int, originalSubject string) protocol.RequeueMessage {
 	msg := protocol.DefaultRequeueMessage()
 	msg.Retries = 1
 	msg.TTL = uint64(5 * 24 * time.Hour)
@@ -197,5 +219,5 @@ func buildPayload(i int, originalSubject string) []byte {
 	// msg.QueueName = "default"
 	msg.OriginalSubject = originalSubject
 	msg.OriginalPayload = []byte(fmt.Sprintf("my awesome payload %d", i))
-	return msg.Bytes()
+	return msg
 }

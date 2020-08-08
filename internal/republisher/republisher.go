@@ -10,21 +10,111 @@ import (
 	"github.com/nickpoorman/nats-requeue/flatbuf"
 	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/nickpoorman/nats-requeue/internal/queue"
+	"github.com/nickpoorman/nats-requeue/internal/ticker"
 	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog/log"
 )
 
-const DefaultACKTimeout = 15 * time.Second
+const (
+	// On this interval, the queues will be scanned for messages
+	// that are ready to be published.
+	DefaultACKTimeout = 15 * time.Second
 
-var CheckpointCorrectionInterval = 60 * time.Second
+	// The amount of time a request (publish) will wait to be acknowledged
+	// by the reviever. In the event an acknowledgement it not received,
+	// the message will be placed back into the queue.
+	DefaultRepublisherInterval = 15 * time.Second
+
+	// On this interval, the queues will be scanned for any messages that might
+	// exist before our current checkpoint. If any such messages are found, the
+	// checkpoint will be updated to the found message key.
+	DefaultCheckpointCorrectionInterval = 60 * time.Second
+
+	// The concurrent limit for messages in flight waiting for a response. When
+	// set to -1 there is no limit. A limit should be set in production
+	// environments to avoid overloading the consumers.
+	DefaultMaxInFlight = -1
+)
+
+// Options can be used to set custom options for a Republisher.
+type Options struct {
+	// On this interval, the queue will be scanned for messages
+	// that are ready to be published.
+	pubInterval time.Duration
+
+	// The amount of time a request (publish) will wait to be acknowledged
+	// by the reviever. In the event an acknowledgement it not received,
+	// the message will be placed back into the queue.
+	ackTimeout time.Duration
+
+	// On this interval, the queues will be scanned for any messages that might
+	// exist before our current checkpoint. If any such messages are found, the
+	// checkpoint will be updated to the found message key.
+	checkpointCorrectionInterval time.Duration
+
+	// The concurrent limit for messages in flight waiting for a response. When
+	// set to -1 there is no limit. A limit should be set in production
+	// environments to avoid overloading the consumers.
+	maxInFlight int
+}
+
+func GetDefaultOptions() Options {
+	return Options{
+		pubInterval:                  DefaultRepublisherInterval,
+		ackTimeout:                   DefaultACKTimeout,
+		checkpointCorrectionInterval: DefaultCheckpointCorrectionInterval,
+		maxInFlight:                  DefaultMaxInFlight,
+	}
+}
+
+// Option is a function on the options to create a Republisher.
+type Option func(*Options) error
+
+// On this interval, the queue will be scanned for messages
+// that are ready to be published.
+func RepublishInterval(interval time.Duration) Option {
+	return func(o *Options) error {
+		o.pubInterval = interval
+		return nil
+	}
+}
+
+// The amount of time a request (publish) will wait to be acknowledged by the
+// reviever. In the event an acknowledgement it not received, the message will
+// be placed back into the queue.
+func AckTimeout(timeout time.Duration) Option {
+	return func(o *Options) error {
+		o.ackTimeout = timeout
+		return nil
+	}
+}
+
+// On this interval, the queues will be scanned for any messages that might
+// exist before our current checkpoint. If any such messages are found, the
+// checkpoint will be updated to the found message key.
+func CheckpointCorrectionInterval(interval time.Duration) Option {
+	return func(o *Options) error {
+		o.checkpointCorrectionInterval = interval
+		return nil
+	}
+}
+
+// The concurrent limit for messages in flight waiting for a response. When set
+// to -1 there is no limit. A limit should be set in production environments to
+// avoid overloading the consumers.
+func MaxInFlight(concurrent int) Option {
+	return func(o *Options) error {
+		o.maxInFlight = concurrent
+		return nil
+	}
+}
 
 type Republisher struct {
 	db       *badger.DB
 	qManager *queue.Manager
 	nc       *nats.Conn
 
-	// The publish interval
-	pubInterval time.Duration
+	opts Options
 
 	mu sync.RWMutex
 
@@ -32,18 +122,27 @@ type Republisher struct {
 	done chan struct{}
 }
 
-func New(nc *nats.Conn, db *badger.DB, qManager *queue.Manager, pubInterval time.Duration) *Republisher {
+func New(nc *nats.Conn, db *badger.DB, qManager *queue.Manager, options ...Option) (*Republisher, error) {
+	opts := GetDefaultOptions()
+	for _, opt := range options {
+		if opt != nil {
+			if err := opt(&opts); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	rq := &Republisher{
-		db:          db,
-		nc:          nc,
-		qManager:    qManager,
-		pubInterval: pubInterval,
-		quit:        make(chan struct{}),
-		done:        make(chan struct{}),
+		db:       db,
+		nc:       nc,
+		qManager: qManager,
+		opts:     opts,
+		quit:     make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 	go rq.initBackgroundTasks()
 
-	return rq
+	return rq, nil
 }
 
 func (rp *Republisher) initBackgroundTasks() {
@@ -57,16 +156,15 @@ func (rp *Republisher) initBackgroundTasks() {
 	// republish loop
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(rp.pubInterval)
-		for {
-			select {
-			case <-ticker.C:
-				rp.republish()
-			case <-rp.quit:
-				ticker.Stop()
-				return
-			}
-		}
+		t := ticker.New(rp.opts.pubInterval)
+		go func() {
+			<-rp.quit
+			t.Stop()
+		}()
+		t.Loop(func() bool {
+			rp.republish()
+			return true
+		})
 	}()
 
 	// Our checkpoint is optimistic. To solve the checkpoint getting ahead of
@@ -75,16 +173,15 @@ func (rp *Republisher) initBackgroundTasks() {
 	// any messages before our checkpoint we will reset the checkpoint.
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(CheckpointCorrectionInterval)
-		for {
-			select {
-			case <-ticker.C:
-				rp.correctCheckpoint()
-			case <-rp.quit:
-				ticker.Stop()
-				return
-			}
-		}
+		t := ticker.New(rp.opts.checkpointCorrectionInterval)
+		go func() {
+			<-rp.quit
+			t.Stop()
+		}()
+		t.Loop(func() bool {
+			rp.correctCheckpoint()
+			return true
+		})
 	}()
 }
 
@@ -109,45 +206,79 @@ func (rp *Republisher) republish() {
 		return
 	}
 
-	ch := make(chan queue.QueueItem)
+	writeCh := make(chan queue.QueueItem)
 	var wg sync.WaitGroup
 	wg.Add(len(qs))
 
 	go func() {
 		wg.Wait()
-		close(ch)
+		close(writeCh)
 	}()
 
-	maxTimeToRead := time.Now() // Read up until now.
+	untilTime := time.Now() // Read up until now.
 	for _, que := range qs {
 		go func(q *queue.Queue) {
 			defer wg.Done()
-			log.Debug().Msgf("republisher: republish: processing queue: %s", q.Name())
-			checkpoint, err := q.ReadFromCheckpoint(maxTimeToRead, func(qi queue.QueueItem) bool {
-				// Note: This function is blocking the Badger transaction from closing.
-				select {
-				// If rp.quit is closed, we stop this early and checkpoint where we're at.
-				case <-rp.quit:
-					return false
-				case ch <- qi:
-					log.Debug().Msg("republisher: republish: processing queue item")
-					return true
-				}
-			})
-			if err != nil {
-				log.Err(err).Msg("call to ReadFromCheckpoint failed")
-				return
-			}
-			log.Debug().Msgf("republisher: republish: processed queue: %s. Updating checkpoint: %s", q.Name(), checkpoint.String())
-			// Update the checkpoint
-			if err := q.UpdateCheckpoint(checkpoint); err != nil {
-				log.Err(err).Msg("call to UpdateCheckpoint failed")
-				return
-			}
+			rp.processQueue(q, writeCh, untilTime)
 		}(que)
 	}
 
-	// TODO: This is doing 1 request at a time. We may want to bump this up with go routines + a limiter.
+	// Based on our max in flight limit, create workers to publish messages and
+	// wait for acknowledgements.
+	concurrency := rp.opts.maxInFlight
+	var pubWg sync.WaitGroup
+	readCh := make(chan queue.QueueItem)
+	var running int
+	for qi := range writeCh {
+		select {
+		// If there is a worker waiting for a message then use it.
+		case readCh <- qi:
+			continue
+		default:
+			if concurrency == -1 || running < concurrency {
+				// No workers available, so create a new one.
+				running++
+				log.Debug().Msgf("republisher: republish: spinning up new worker: %d", running)
+
+				pubWg.Add(1)
+				go func() {
+					defer pubWg.Done()
+					rp.publishMessages(readCh)
+				}()
+			}
+			readCh <- qi
+		}
+	}
+	close(readCh)
+	pubWg.Wait()
+}
+
+func (rp *Republisher) processQueue(q *queue.Queue, ch chan<- queue.QueueItem, untilTime time.Time) {
+	log.Debug().Msgf("republisher: republish: processing queue: %s", q.Name())
+	checkpoint, err := q.ReadFromCheckpoint(untilTime, func(qi queue.QueueItem) bool {
+		// Note: This function is blocking the Badger transaction from closing.
+		select {
+		// If rp.quit is closed, we stop this early and checkpoint where we're at.
+		case <-rp.quit:
+			return false
+		case ch <- qi:
+			log.Debug().Msg("republisher: republish: processing queue item")
+			return true
+		}
+	})
+	if err != nil {
+		log.Err(err).Msg("call to ReadFromCheckpoint failed")
+		return
+	}
+	log.Debug().Msgf("republisher: republish: processed queue: %s. Updating checkpoint: %s", q.Name(), checkpoint.String())
+	// Update the checkpoint
+	if err := q.UpdateCheckpoint(checkpoint); err != nil {
+		log.Err(err).Msg("call to UpdateCheckpoint failed")
+		return
+	}
+}
+
+func (rp *Republisher) publishMessages(ch <-chan queue.QueueItem) {
 	for qi := range ch {
 		fb := flatbuf.GetRootAsRequeueMessage(qi.V, 0)
 
@@ -190,10 +321,11 @@ func (rp *Republisher) republish() {
 
 // Requeue the message to disk for a future time.
 func (rp *Republisher) requeueMessageToDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) {
-	// TODO: If this process were to shut off before we requeue to disk,
-	// we could end up with data on disk that is zombied and won't be picked up
-	// because of our checkpoint. To solve this, we can have another goroutine in the background
-	// that infrequeuently checks for messages that are not marked as deleted, but are before our checkpoint.
+	// If this process were to shut off before we requeue to disk, we could end
+	// up with data on disk that is zombied and won't be picked up because of
+	// our checkpoint. To solve this, we have another goroutine in the
+	// background that infrequeuently checks for messages that are not marked as
+	// deleted, but are before our checkpoint.
 
 	entry, err := rp.createEntry(qi, fb)
 	if err != nil {
