@@ -6,6 +6,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
+	"github.com/nickpoorman/nats-requeue/internal/ticker"
 	"github.com/rs/zerolog/log"
 )
 
@@ -50,16 +51,15 @@ func (m *Manager) initBackgroundTasks() {
 
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(m.checkQueueStatesInterval)
-		for {
-			select {
-			case <-ticker.C:
-				m.checkQueueStates()
-			case <-m.quit:
-				ticker.Stop()
-				return
-			}
-		}
+		t := ticker.New(m.checkQueueStatesInterval)
+		go func() {
+			<-m.quit
+			t.Stop()
+		}()
+		t.Loop(func() bool {
+			m.checkQueueStates()
+			return true
+		})
 	}()
 }
 
