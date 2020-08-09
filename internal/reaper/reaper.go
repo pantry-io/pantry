@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	badger "github.com/dgraph-io/badger/v2"
 	badgerInternal "github.com/nickpoorman/nats-requeue/internal/badger"
 	"github.com/nickpoorman/nats-requeue/internal/ticker"
 	"github.com/rs/zerolog/log"
@@ -59,6 +60,7 @@ func ReapedCallbacks(callbacks ...ReapedCallbackFunc) Option {
 }
 
 type Reaper struct {
+	dst         *badger.DB
 	dir         string
 	instanceDir string
 	opts        Options
@@ -66,7 +68,7 @@ type Reaper struct {
 	quit chan struct{}
 }
 
-func NewReaper(dir string, instanceDir string, options ...Option) (*Reaper, error) {
+func NewReaper(dst *badger.DB, dir string, instanceDir string, options ...Option) (*Reaper, error) {
 	opts := GetDefaultOptions()
 	for _, opt := range options {
 		if opt != nil {
@@ -77,6 +79,7 @@ func NewReaper(dir string, instanceDir string, options ...Option) (*Reaper, erro
 	}
 
 	reaper := &Reaper{
+		dst:         dst,
 		dir:         dir,
 		instanceDir: instanceDir,
 		opts:        opts,
@@ -154,23 +157,36 @@ func (r *Reaper) mergeInstance(dir, instanceId string) (bool, error) {
 		Str("path", path).
 		Msg("attempting to merge badger instance")
 
+	instance, err := r.openBadgerInstance(path)
+	if err != nil {
+		return false, err
+	}
+	if instance == nil {
+		return false, nil
+	}
+	defer instance.Close()
+
+	if err := copyBadger(r.dst, instance); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (r *Reaper) openBadgerInstance(path string) (*badger.DB, error) {
 	instance, err := badgerInternal.Open(path)
 	if err != nil {
 		// Really don't like this. We should probably check syscall.EWOULDBLOCK
 		// by unwrapping. Badger isn't currently using wrapping.
 		if !strings.Contains(err.Error(), syscall.EWOULDBLOCK.Error()) {
 			log.Err(err).Msg("problem opening badger instance")
-			return false, err
+			return instance, err
 		}
 		// Ignore the "resource temporarily unavailable" errors.
 		// Return that we didn't merge the instance.
-		return false, nil
+		return nil, nil
 	}
-	defer instance.Close()
-
-	// TODO: Do merge here
-
-	return true, nil
+	return instance, nil
 }
 
 func (r *Reaper) triggerReapedCallbacks(dir, instanceId string) {
@@ -180,4 +196,8 @@ func (r *Reaper) triggerReapedCallbacks(dir, instanceId string) {
 		}
 		go cb(dir, instanceId)
 	}
+}
+
+func copyBadger(dst, src *badger.DB) error {
+	return nil
 }
