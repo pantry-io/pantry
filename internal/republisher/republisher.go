@@ -67,7 +67,7 @@ func GetDefaultOptions() Options {
 	}
 }
 
-// Option is a function on the options to create a Republisher.
+// Option is a function on the options for a Republisher.
 type Option func(*Options) error
 
 // On this interval, the queue will be scanned for messages

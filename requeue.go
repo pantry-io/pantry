@@ -2,23 +2,27 @@ package requeue
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
+	badger "github.com/dgraph-io/badger/v2"
+	"github.com/dgraph-io/badger/v2/y"
+	"github.com/gofrs/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
+	badgerInternal "github.com/nickpoorman/nats-requeue/internal/badger"
 	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/nickpoorman/nats-requeue/internal/queue"
+	"github.com/nickpoorman/nats-requeue/internal/reaper"
 	"github.com/nickpoorman/nats-requeue/internal/republisher"
 	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-
-	badger "github.com/dgraph-io/badger/v2"
-	"github.com/dgraph-io/badger/v2/y"
 )
 
 const (
@@ -119,10 +123,13 @@ func NATSConnectionError(connErrCb func(*Conn, error)) Option {
 	}
 }
 
-// BadgerDataPath sets the context to be used for connect.
-func BadgerDataPath(path string) Option {
+// DataDir is the directory where data will be stored. An instance of the data
+// store will be created in this directory. This directory is also looped over
+// by the reaper looking for zombie instances that need to be merged into the
+// main data instance created at initialization.
+func DataDir(path string) Option {
 	return func(o *Options) error {
-		o.badgerDataPath = path
+		o.dataDir = path
 		return nil
 	}
 }
@@ -135,16 +142,6 @@ func BadgerWriteMsgErr(cb func(*nats.Msg, error)) Option {
 		return nil
 	}
 }
-
-// // RepublisherInterval sets interval in which to trigger the republisher.
-// // This is the interval in which requeue will look for messages that are ready to be republished.
-// // The smaller this number is, the greater the number of possible disk reads.
-// func RepublisherInterval(interval time.Duration) Option {
-// 	return func(o *Options) error {
-// 		o.republisherOpts = append(o.republisherOpts, republisher.RepublishInterval(interval))
-// 		return nil
-// 	}
-// }
 
 // RepublisherOpts sets the options for the republisher.
 func RepublisherOptions(options ...republisher.Option) Option {
@@ -167,7 +164,7 @@ type Options struct {
 	natsConnErrCB func(*Conn, error)
 
 	// Badger
-	badgerDataPath    string
+	dataDir           string
 	badgerWriteMsgErr func(*nats.Msg, error)
 
 	// Republisher
@@ -214,6 +211,12 @@ func (o Options) Connect() (*Conn, error) {
 		return nil, err
 	}
 
+	// Start up the zombie badger store reaper.
+	if err := rc.initReaper(); err != nil {
+		rc.Close()
+		return nil, err
+	}
+
 	go func() {
 		// Context closed.
 		<-o.ctx.Done()
@@ -241,6 +244,7 @@ type closers struct {
 	nats          *y.Closer
 	natsConsumers *y.Closer
 	badger        *y.Closer
+	reaper        *y.Closer
 	natsProducers *y.Closer
 }
 
@@ -255,7 +259,12 @@ type Conn struct {
 	natsMsgCh chan *nats.Msg
 
 	// Badger
-	badgerDB *badger.DB
+	badgerDB    *badger.DB
+	instanceId  string
+	instanceDir string
+
+	// Badger Reaper
+	reaper *reaper.Reaper
 
 	// Queues
 	qManager    *queue.Manager
@@ -267,14 +276,18 @@ type Conn struct {
 }
 
 func NewConn(o Options) *Conn {
+	instanceId := uuid.Must(uuid.NewV4()).String()
 	return &Conn{
-		Opts:      o,
-		natsMsgCh: make(chan *nats.Msg),
-		closed:    make(chan struct{}),
+		Opts:        o,
+		natsMsgCh:   make(chan *nats.Msg),
+		closed:      make(chan struct{}),
+		instanceId:  instanceId,
+		instanceDir: filepath.Join(o.dataDir, instanceId),
 		closers: closers{
 			nats:          y.NewCloser(0),
 			natsConsumers: y.NewCloser(0),
 			badger:        y.NewCloser(0),
+			reaper:        y.NewCloser(0),
 			natsProducers: y.NewCloser(0),
 		},
 	}
@@ -289,6 +302,8 @@ func (c *Conn) Close() {
 		c.closers.nats.SignalAndWait()
 		// Stop processing nats messages
 		c.closers.natsConsumers.SignalAndWait()
+		// Stop the reaper
+		c.closers.reaper.SignalAndWait()
 		// Stop badger
 		c.closers.badger.SignalAndWait()
 		log.Info().Msg("requeue: closed")
@@ -427,13 +442,16 @@ func (c *Conn) initBadger() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	openOpts := badger.DefaultOptions(c.Opts.badgerDataPath)
-	openOpts.Logger = badgerLogger{}
-	// Open the Badger database located in the /tmp/badger directory.
-	// It will be created if it doesn't exist.
-	db, err := badger.Open(openOpts)
+	// Create a new instance in our dataDir
+	if err := os.MkdirAll(c.instanceDir, os.ModePerm); err != nil {
+		return fmt.Errorf("init badger: create instance directory: %w", err)
+	}
+
+	// We will then create a new instance in this dir.
+	db, err := badgerInternal.Open(c.instanceDir)
 	if err != nil {
-		log.Err(err).Msgf("problem opening badger data path: %s", c.Opts.badgerDataPath)
+		log.Err(err).Msgf("problem opening badger data path: %s", c.Opts.dataDir)
+		return err
 	}
 	c.badgerDB = db
 
@@ -476,7 +494,7 @@ func (c *Conn) initNatsConsumer() {
 	natsConsumer := c.closers.natsConsumers
 	defer natsConsumer.Done()
 
-	wb := newBatchedWriter(c.badgerDB, 15*time.Millisecond)
+	wb := badgerInternal.NewBatchedWriter(c.badgerDB, 15*time.Millisecond)
 	defer wb.Close()
 	c.mu.RUnlock()
 
@@ -492,7 +510,7 @@ func (c *Conn) initNatsConsumer() {
 	}
 }
 
-func (c *Conn) processIngressMessage(wb *batchedWriter, msg *nats.Msg) {
+func (c *Conn) processIngressMessage(wb *badgerInternal.BatchedWriter, msg *nats.Msg) {
 	fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
 	// decoded := RequeueMessageFromNATS(msg)
 	log.Debug().
@@ -599,38 +617,34 @@ func (c *Conn) initNatsProducers() error {
 		}
 	}()
 
-	// On some interval, look at messages that have been written to badger
-	// and see if any of them are ready to be sent.
-
-	// We will need to lookup the last key that was read for each queue so we know where to start.
 	return nil
 }
 
-// // Range performs a range query against the storage. It calls f sequentially for
-// // each key and value present in the store. If f returns false, range stops the
-// // iteration. The implementation must guarantee that the keys are
-// // lexigraphically sorted.
-// func (c *Conn) Range(seek, until key.Key, f func(key, value []byte) bool) error {
-// 	return c.badgerDB.View(func(tx *badger.Txn) error {
-// 		opts := badger.DefaultIteratorOptions
-// 		opts.PrefetchValues = false
-// 		opts.Prefix = key.PrefixOf(seek, until)
-// 		it := tx.NewIterator(opts)
-// 		defer it.Close()
+func (c *Conn) initReaper() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-// 		// Seek the prefix and check the key so we can quickly exit the iteration.
-// 		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
-// 			item := it.Item()
-// 			key := item.Key()
-// 			if bytes.Compare(key, until.Bytes()) > 0 {
-// 				return nil // Stop if we're reached the end
-// 			}
+	// Create our reaper
+	reaper, err := reaper.NewReaper(c.Opts.dataDir, c.instanceDir)
+	if err != nil {
+		return err
+	}
+	c.reaper = reaper
 
-// 			// Fetch the value
-// 			if value, err := item.ValueCopy(nil); err != nil && f(key, value) {
-// 				return nil
-// 			}
-// 		}
-// 		return nil
-// 	})
-// }
+	c.closers.reaper.AddRunning(1)
+	go func() {
+		defer c.closers.reaper.Done()
+		<-c.closers.reaper.HasBeenClosed()
+
+		log.Debug().Msg("closing reaper...")
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		// close the reaper
+		if c.reaper != nil {
+			c.reaper.Close()
+		}
+	}()
+
+	return nil
+}

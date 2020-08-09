@@ -1,4 +1,4 @@
-package requeue
+package badger
 
 import (
 	"sync"
@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type batchedWriter struct {
+type BatchedWriter struct {
 	db *badger.DB
 	d  time.Duration
 
@@ -21,8 +21,8 @@ type batchedWriter struct {
 	flushKicked bool
 }
 
-func newBatchedWriter(db *badger.DB, d time.Duration) *batchedWriter {
-	bw := &batchedWriter{
+func NewBatchedWriter(db *badger.DB, d time.Duration) *BatchedWriter {
+	bw := &BatchedWriter{
 		db:   db,
 		d:    d,
 		wb:   NewWriteBatch(db),
@@ -36,7 +36,7 @@ func newBatchedWriter(db *badger.DB, d time.Duration) *batchedWriter {
 
 // On duration, call flush so we don't end up with writes waiting too long to be
 // committed.
-func (bw *batchedWriter) loop(d time.Duration) {
+func (bw *BatchedWriter) loop(d time.Duration) {
 	// ticker := time.NewTicker(d)
 	// for {
 	// 	select {
@@ -52,7 +52,7 @@ func (bw *batchedWriter) loop(d time.Duration) {
 	// }
 }
 
-func (bw *batchedWriter) flush(last bool) {
+func (bw *BatchedWriter) flush(last bool) {
 	bw.mu.Lock()
 	defer bw.mu.Unlock()
 
@@ -71,12 +71,12 @@ func (bw *batchedWriter) flush(last bool) {
 	}
 }
 
-func (bw *batchedWriter) Close() {
+func (bw *BatchedWriter) Close() {
 	close(bw.quit)
 	<-bw.done
 }
 
-func (bw *batchedWriter) Set(k, v []byte, cb WriteBatchCommitCB) error {
+func (bw *BatchedWriter) Set(k, v []byte, cb WriteBatchCommitCB) error {
 	bw.mu.Lock()
 	defer bw.mu.Unlock()
 	// Create a timeout
@@ -91,7 +91,7 @@ func (bw *batchedWriter) Set(k, v []byte, cb WriteBatchCommitCB) error {
 	return err
 }
 
-func (bw *batchedWriter) SetEntry(e *badger.Entry, cb WriteBatchCommitCB) error {
+func (bw *BatchedWriter) SetEntry(e *badger.Entry, cb WriteBatchCommitCB) error {
 	bw.mu.Lock()
 	defer bw.mu.Unlock()
 	// Create a timeout

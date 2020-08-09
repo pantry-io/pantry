@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package requeue
+package badger
 
 import (
 	"sync"

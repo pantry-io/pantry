@@ -17,7 +17,6 @@ import (
 	"github.com/nickpoorman/nats-requeue/internal/republisher"
 	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog"
-	"github.com/segmentio/ksuid"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 )
@@ -52,8 +51,8 @@ func Test_RequeueConnect(t *testing.T) {
 		s.Shutdown()
 	})
 
-	dir := setup(t)
-	dataPath := fmt.Sprintf("%s/%s_%s", dir, t.Name(), ksuid.New().String())
+	// Create a directory just for this test.
+	dataDir := setup(t)
 
 	// To not collide with other tests.
 	subject := nats.NewInbox()
@@ -72,7 +71,7 @@ func Test_RequeueConnect(t *testing.T) {
 
 	rc, err := requeue.Connect(
 		requeue.ConnectContext(ctx),
-		requeue.BadgerDataPath(dataPath),
+		requeue.DataDir(dataDir),
 		requeue.NATSOptions(natsOpts),
 		requeue.NATSServers(clientURL),
 		requeue.NATSSubject(subject),
@@ -110,7 +109,7 @@ func Test_RequeueConnect(t *testing.T) {
 	var eventsMu sync.Mutex
 	events := make(map[string]struct{})
 
-	total := 1000
+	total := 100
 	pending := int64(total)
 	group, _ := errgroup.WithContext(context.Background())
 	ch := make(chan int)
