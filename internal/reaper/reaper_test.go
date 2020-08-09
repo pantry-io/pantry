@@ -50,21 +50,18 @@ func createZombieInstance(dataDir string) (string, []kv, error) {
 	}
 	defer db.Close()
 
-	// Write some data to it
-	if err := db.Update(func(txn *badger.Txn) error {
-		for i := 0; i < 100; i++ {
-			key := []byte(fmt.Sprintf("key.%d", i))
-			value := []byte(fmt.Sprintf("value.%d", i))
-			if err := txn.Set(key, value); err != nil {
-				return err
-			}
-			kvs = append(kvs, kv{k: key, v: value})
-		}
+	wb := db.NewWriteBatch()
+	defer wb.Cancel()
 
-		return nil
-	}); err != nil {
-		return instanceId, kvs, err
+	for i := 0; i < 1000000; i++ {
+		key := []byte(fmt.Sprintf("key.%d", i))
+		value := []byte(fmt.Sprintf("value.%d", i))
+		if err := wb.Set(key, value); err != nil {
+			return instanceId, kvs, err
+		}
+		kvs = append(kvs, kv{k: key, v: value})
 	}
+	err = wb.Flush() // Wait for all txns to finish.
 
 	return instanceId, kvs, err
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
+	"github.com/dgraph-io/badger/v2/pb"
 	"github.com/rs/zerolog/log"
 )
 
@@ -103,6 +104,37 @@ func (bw *BatchedWriter) SetEntry(e *badger.Entry, cb WriteBatchCommitCB) error 
 			bw.flush(false)
 		}()
 	}
+	return err
+}
+
+func (bw *BatchedWriter) WriteKVList(kvList *pb.KVList, cb WriteBatchCommitCB) error {
+	bw.mu.Lock()
+	defer bw.mu.Unlock()
+	var wg sync.WaitGroup
+	wg.Add(len(kvList.Kv))
+	var err error
+	var errOnce sync.Once
+	for _, kv := range kvList.Kv {
+		e := badger.Entry{Key: kv.Key, Value: kv.Value}
+		if len(kv.UserMeta) > 0 {
+			e.UserMeta = kv.UserMeta[0]
+		}
+		if err := bw.SetEntry(&e, func(e error) {
+			defer wg.Done()
+			if e != nil {
+				errOnce.Do(func() {
+					err = e
+				})
+			}
+		}); err != nil {
+			return err
+		}
+	}
+	go func() {
+		wg.Wait()
+		cb(err)
+	}()
+
 	return err
 }
 

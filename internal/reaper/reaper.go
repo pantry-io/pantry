@@ -1,6 +1,8 @@
 package reaper
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"strings"
 	"sync"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
+	"github.com/dgraph-io/badger/v2/pb"
 	badgerInternal "github.com/nickpoorman/nats-requeue/internal/badger"
 	"github.com/nickpoorman/nats-requeue/internal/ticker"
 	"github.com/rs/zerolog/log"
@@ -199,5 +202,59 @@ func (r *Reaper) triggerReapedCallbacks(dir, instanceId string) {
 }
 
 func copyBadger(dst, src *badger.DB) error {
+	streamReader := src.NewStream()
+
+	// -- Optional settings
+	streamReader.LogPrefix = "Reaper.Badger.Streaming" // For identifying stream logs. Outputs to Logger.
+
+	// KeyToList is called concurrently for chosen keys. This can be used to convert
+	// Badger data into custom key-values. If nil, uses stream.ToList, a default
+	// implementation, which picks all valid key-values.
+	streamReader.KeyToList = func(key []byte, itr *badger.Iterator) (*pb.KVList, error) {
+		list := &pb.KVList{}
+		for ; itr.Valid(); itr.Next() {
+			item := itr.Item()
+			if item.IsDeletedOrExpired() {
+				break
+			}
+			if !bytes.Equal(key, item.Key()) {
+				// Break out on the first encounter with another key.
+				break
+			}
+
+			valCopy, err := item.ValueCopy(nil)
+			if err != nil {
+				return nil, err
+			}
+			kv := &pb.KV{
+				Key:       item.KeyCopy(nil),
+				Value:     valCopy,
+				UserMeta:  []byte{item.UserMeta()},
+				Version:   item.Version(),
+				ExpiresAt: item.ExpiresAt(),
+			}
+			list.Kv = append(list.Kv, kv)
+
+			// We only care about collecting one version
+			break
+		}
+		return list, nil
+	}
+
+	// -- End of optional settings.
+
+	wb := dst.NewWriteBatch()
+	defer wb.Cancel()
+
+	streamReader.Send = func(list *pb.KVList) error {
+		return wb.Write(list)
+	}
+
+	// Run the stream
+	// TODO: We should do our best to complete but if we need to shut down, we should handle that case.
+	if err := streamReader.Orchestrate(context.Background()); err != nil {
+		return err
+	}
+
 	return nil
 }
