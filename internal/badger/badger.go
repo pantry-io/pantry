@@ -1,7 +1,6 @@
 package badger
 
 import (
-	"fmt"
 	"path/filepath"
 
 	"github.com/dgraph-io/badger/v2"
@@ -16,5 +15,5 @@ func Open(instancePath string) (*badger.DB, error) {
 }
 
 func InstanceDir(dataDir, instanceId string) string {
-	return filepath.Join(dataDir, fmt.Sprintf("inst_%s", instanceId))
+	return filepath.Join(dataDir, instanceId)
 }
