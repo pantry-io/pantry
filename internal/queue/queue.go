@@ -17,6 +17,14 @@ func (c Checkpoint) String() string {
 	return ParseQueueKey(c).String()
 }
 
+func (c Checkpoint) Bytes() []byte {
+	return c
+}
+
+func (c Checkpoint) Key() key.Key {
+	return c.Bytes()
+}
+
 type Queue struct {
 	db *badger.DB
 

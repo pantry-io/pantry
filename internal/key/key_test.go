@@ -29,3 +29,15 @@ func TestNew(t *testing.T) {
 
 	assert.Equal(t, -1, bytes.Compare(k2, k3), "k2 should be less than k3")
 }
+
+func TestCompate(t *testing.T) {
+	t1 := time.Unix(1, 100)
+	t2 := t1.Add(1 * time.Second)
+	k1 := New(t1)
+	k2 := New(t2)
+
+	assert.Equal(t, -1, Compare(k1, k2), "k1 should be less than k2")
+	assert.Equal(t, 1, Compare(k2, k1), "k2 should be greater than k1")
+	assert.Equal(t, 0, Compare(k1, k1), "k1 should be equal to k1")
+	assert.Equal(t, 0, Compare(k2, k2), "k2 should be equal to k2")
+}

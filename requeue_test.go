@@ -39,7 +39,7 @@ func setup(t *testing.T) string {
 	return dir
 }
 
-func Test_RequeueConnect(t *testing.T) {
+func Test_RequeueEndToEnd(t *testing.T) {
 	zerolog.SetGlobalLevel(zerolog.NoLevel)
 	done := true
 

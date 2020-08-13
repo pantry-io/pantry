@@ -145,6 +145,8 @@ func (r *Reaper) reap() {
 			return
 		}
 
+		// TODO: Remove the instance directory from disk.
+
 		if merged {
 			r.triggerReapedCallbacks(r.dir, instanceId)
 		}

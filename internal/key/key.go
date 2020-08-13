@@ -1,6 +1,7 @@
 package key
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -52,6 +53,13 @@ func New(time time.Time) Key {
 // 	copy(b, k)
 // 	return b[:len(k)]
 // }
+
+// Compare returns an integer comparing two keys lexicographically.
+// The result will be 0 if a==b, -1 if a < b, and +1 if a > b.
+// A nil argument is equivalent to an empty slice.
+func Compare(a, b Key) int {
+	return bytes.Compare(a, b)
+}
 
 // PrefixOf a common prefix between two keys (common leading bytes) which is
 // then used as a prefix for Badger to narrow down SSTables to traverse.
@@ -112,4 +120,8 @@ func (k Key) Print() string {
 		k.Seq(),
 		k.InstanceID(),
 	)
+}
+
+func (k Key) Bytes() []byte {
+	return k
 }

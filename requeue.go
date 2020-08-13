@@ -151,6 +151,14 @@ func RepublisherOptions(options ...republisher.Option) Option {
 	}
 }
 
+// ReaperOpts sets the options for the instance reaper.
+func ReaperOptions(options ...reaper.Option) Option {
+	return func(o *Options) error {
+		o.reaperOpts = append(o.reaperOpts, options...)
+		return nil
+	}
+}
+
 // TODO: These options should probably be lower case so they are private.
 // Options can be used to create a customized Service connections.
 type Options struct {
@@ -169,6 +177,9 @@ type Options struct {
 
 	// Republisher
 	republisherOpts []republisher.Option
+
+	// Reaper
+	reaperOpts []reaper.Option
 }
 
 func GetDefaultOptions() Options {
@@ -181,6 +192,8 @@ func GetDefaultOptions() Options {
 			nats.Name(DefaultNatsClientName),
 			nats.RetryOnFailedConnect(DefaultNatsRetryOnFailure),
 		},
+		republisherOpts: make([]republisher.Option, 0),
+		reaperOpts:      make([]reaper.Option, 0),
 	}
 }
 
@@ -625,7 +638,12 @@ func (c *Conn) initReaper() error {
 	defer c.mu.Unlock()
 
 	// Create our reaper
-	reaper, err := reaper.NewReaper(c.Opts.dataDir, c.instanceDir)
+	reaper, err := reaper.NewReaper(
+		c.badgerDB,
+		c.Opts.dataDir,
+		c.instanceDir,
+		c.Opts.reaperOpts...,
+	)
 	if err != nil {
 		return err
 	}

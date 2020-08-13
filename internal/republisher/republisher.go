@@ -122,6 +122,64 @@ type Republisher struct {
 	done chan struct{}
 }
 
+type run struct {
+	queues []runQueue
+
+	// Holds the time at which the republishers is currently reading up until in
+	// the queue or the last time it read up until in the queue.
+	until time.Time
+}
+
+func newRun(until time.Time, queues []*queue.Queue) *run {
+	r := &run{
+		until:  until,
+		queues: make([]runQueue, 0, len(queues)),
+	}
+
+	for _, q := range queues {
+		r.queues = append(r.queues, runQueue{q: q})
+	}
+
+	return r
+}
+
+type runQueue struct {
+	mu sync.Mutex
+	q  *queue.Queue
+
+	// In each run, keep track of the minimum checkpoint for any enqueued messages
+	// back to our store. This is used to set the checkpoint once the run has
+	// completed.
+	minCheckpoint key.Key
+}
+
+// Set the minCheckpoint on Republisher to be c if it is less than the
+// current one.
+func (rq *runQueue) setMinCheckpoint(c key.Key) {
+	rq.mu.Lock()
+	defer rq.mu.Unlock()
+	if key.Compare(rq.minCheckpoint, c) == -1 {
+		// minCheckpoint is already less than c.
+		return
+	}
+	rq.minCheckpoint = c
+}
+
+// Save the checkpoint to our underlying store.
+func (rq *runQueue) saveCheckpoint() error {
+	rq.mu.Lock()
+	defer rq.mu.Unlock()
+	if err := rq.q.UpdateCheckpoint(rq.minCheckpoint.Bytes()); err != nil {
+		return fmt.Errorf("saveCheckpoint failed: %w", err)
+	}
+	return nil
+}
+
+type runQueueItem struct {
+	queueItem queue.QueueItem
+	runQueue  *runQueue
+}
+
 func New(nc *nats.Conn, db *badger.DB, qManager *queue.Manager, options ...Option) (*Republisher, error) {
 	opts := GetDefaultOptions()
 	for _, opt := range options {
@@ -206,7 +264,7 @@ func (rp *Republisher) republish() {
 		return
 	}
 
-	writeCh := make(chan queue.QueueItem)
+	writeCh := make(chan runQueueItem)
 	var wg sync.WaitGroup
 	wg.Add(len(qs))
 
@@ -215,19 +273,23 @@ func (rp *Republisher) republish() {
 		close(writeCh)
 	}()
 
-	untilTime := time.Now() // Read up until now.
-	for _, que := range qs {
-		go func(q *queue.Queue) {
+	run := newRun(
+		time.Now(), // Read up until now.
+		qs,
+	)
+
+	for i := range run.queues {
+		go func(rq *runQueue) {
 			defer wg.Done()
-			rp.processQueue(q, writeCh, untilTime)
-		}(que)
+			rp.processQueue(rq, writeCh, run.until)
+		}(&run.queues[i])
 	}
 
 	// Based on our max in flight limit, create workers to publish messages and
 	// wait for acknowledgements.
 	concurrency := rp.opts.maxInFlight
 	var pubWg sync.WaitGroup
-	readCh := make(chan queue.QueueItem)
+	readCh := make(chan runQueueItem)
 	var running int
 	for qi := range writeCh {
 		select {
@@ -251,17 +313,38 @@ func (rp *Republisher) republish() {
 	}
 	close(readCh)
 	pubWg.Wait()
+
+	// Update the checkpoint for the queues.
+	// There could in theory be a lot of them so we'll try to do them
+	// concurrently.
+	var updateCpWg sync.WaitGroup
+	updateCpWg.Add(len(run.queues))
+	for i := range run.queues {
+		go func(rq *runQueue) {
+			defer updateCpWg.Done()
+			if err := rq.saveCheckpoint(); err != nil {
+				log.Err(err).Msg("problem saving checkpoint")
+				return
+			}
+		}(&run.queues[i])
+	}
+	updateCpWg.Wait()
 }
 
-func (rp *Republisher) processQueue(q *queue.Queue, ch chan<- queue.QueueItem, untilTime time.Time) {
-	log.Debug().Msgf("republisher: republish: processing queue: %s", q.Name())
-	checkpoint, err := q.ReadFromCheckpoint(untilTime, func(qi queue.QueueItem) bool {
+// This should be called with a lock already held on rp.
+func (rp *Republisher) processQueue(rq *runQueue, ch chan<- runQueueItem, untilTime time.Time) {
+	log.Debug().Msgf("republisher: republish: processing queue: %s", rq.q.Name())
+	checkpoint, err := rq.q.ReadFromCheckpoint(untilTime, func(qi queue.QueueItem) bool {
+		rqi := runQueueItem{
+			runQueue:  rq,
+			queueItem: qi,
+		}
 		// Note: This function is blocking the Badger transaction from closing.
 		select {
 		// If rp.quit is closed, we stop this early and checkpoint where we're at.
 		case <-rp.quit:
 			return false
-		case ch <- qi:
+		case ch <- rqi:
 			log.Debug().Msg("republisher: republish: processing queue item")
 			return true
 		}
@@ -270,23 +353,26 @@ func (rp *Republisher) processQueue(q *queue.Queue, ch chan<- queue.QueueItem, u
 		log.Err(err).Msg("call to ReadFromCheckpoint failed")
 		return
 	}
-	log.Debug().Msgf("republisher: republish: processed queue: %s. Updating checkpoint: %s", q.Name(), checkpoint.String())
-	// Update the checkpoint
-	if err := q.UpdateCheckpoint(checkpoint); err != nil {
-		log.Err(err).Msg("call to UpdateCheckpoint failed")
-		return
-	}
+	log.Debug().Msgf(
+		"republisher: republish: processed queue: %s. Updating checkpoint: %s",
+		rq.q.Name(),
+		checkpoint.String(),
+	)
+
+	// Set the checkpoint for this runQueue.
+	rq.setMinCheckpoint(checkpoint.Key())
 }
 
-func (rp *Republisher) publishMessages(ch <-chan queue.QueueItem) {
-	for qi := range ch {
-		fb := flatbuf.GetRootAsRequeueMessage(qi.V, 0)
+// This should be called with a lock already held on rp.
+func (rp *Republisher) publishMessages(ch <-chan runQueueItem) {
+	for rqi := range ch {
+		fb := flatbuf.GetRootAsRequeueMessage(rqi.queueItem.V, 0)
 
 		log.Debug().
 			Str("msg", string(fb.OriginalPayloadBytes())).
 			Msg("republishing message")
 
-		if qi.IsExpired() {
+		if rqi.queueItem.IsExpired() {
 			// Don't send a message with an expired TTL.
 			// TTL will take care of removing the message from disk for us.
 			log.Debug().
@@ -298,7 +384,7 @@ func (rp *Republisher) publishMessages(ch <-chan queue.QueueItem) {
 		subj := string(fb.OriginalSubject())
 		data := fb.OriginalPayloadBytes()
 
-		_, err := rp.nc.Request(subj, data, DefaultACKTimeout) // TODO: Make this timeout configurable.
+		_, err := rp.nc.Request(subj, data, rp.opts.ackTimeout)
 		if err != nil {
 			log.Err(err).
 				Str("msg", string(fb.OriginalPayloadBytes())).
@@ -309,52 +395,61 @@ func (rp *Republisher) publishMessages(ch <-chan queue.QueueItem) {
 			// If retires > 1 then there are retries still left to be spent.
 			if fb.Retries() > 1 {
 				// Requeue the message to disk for a future time.
-				rp.requeueMessageToDisk(qi, fb)
+				if err := rp.requeueMessageToDisk(rqi, fb); err != nil {
+					log.Err(err).
+						Interface("queueItem", rqi.queueItem).
+						Msg("unable to requeue message")
+				}
 				continue
 			}
 		}
 		// Got the ACK or ran out of retries.
 		// Remove the message from disk.
-		rp.removeMessageFromDisk(qi, fb)
+		if err := rp.removeMessageFromDisk(rqi.queueItem, fb); err != nil {
+			log.Err(err).
+				Interface("queueItem", rqi.queueItem).
+				Msg("unable to remove message from store")
+		}
 	}
 }
 
 // Requeue the message to disk for a future time.
-func (rp *Republisher) requeueMessageToDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) {
+// This should be called with a lock already held on rp.
+func (rp *Republisher) requeueMessageToDisk(rqi runQueueItem, fb *flatbuf.RequeueMessage) error {
 	// If this process were to shut off before we requeue to disk, we could end
-	// up with data on disk that is zombied and won't be picked up because of
-	// our checkpoint. To solve this, we have another goroutine in the
-	// background that infrequeuently checks for messages that are not marked as
-	// deleted, but are before our checkpoint.
+	// up with zombie data on disk and won't be picked up because of our
+	// checkpoint. To solve this, we have another goroutine in the background
+	// that infrequently checks for messages that are not marked as deleted, but
+	// are before our checkpoint.
 
-	entry, err := rp.createEntry(qi, fb)
+	entry, err := rp.createEntry(rqi, fb)
 	if err != nil {
 		log.Err(err).
 			Str("msg", string(fb.OriginalPayloadBytes())).
 			Msg("problem creating the Entry")
+		return fmt.Errorf("requeueMessageToDisk: %w", err)
 	}
 
-	err = rp.db.Update(func(txn *badger.Txn) error {
+	return rp.db.Update(func(txn *badger.Txn) error {
 		// First insert our new entry
 		err := txn.SetEntry(entry)
 		if err != nil {
 			log.Err(err).Msg("requeueMessageToDisk: problem calling SetEntry")
+			return err
 		}
 
 		// Then delete our existing key
-		err = txn.Delete(qi.K)
+		err = txn.Delete(rqi.queueItem.K)
 		if err != nil {
 			return err
 		}
 
 		return nil
 	})
-	if err != nil {
-		return
-	}
 }
 
-func (rp *Republisher) removeMessageFromDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) {
+// This should be called with a lock already held on rp.
+func (rp *Republisher) removeMessageFromDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) error {
 	err := rp.db.Update(func(txn *badger.Txn) error {
 		return txn.Delete(qi.K)
 	})
@@ -363,20 +458,31 @@ func (rp *Republisher) removeMessageFromDisk(qi queue.QueueItem, fb *flatbuf.Req
 			Str("msg", string(fb.OriginalPayloadBytes())).
 			Msg("error removing message from disk")
 	}
+
+	return fmt.Errorf("removeMessageFromDisk: %w", err)
 }
 
-func (rp *Republisher) createEntry(qi queue.QueueItem, fb *flatbuf.RequeueMessage) (*badger.Entry, error) {
+// This should be called with a lock already held on rp.
+func (rp *Republisher) createEntry(rqi runQueueItem, fb *flatbuf.RequeueMessage) (*badger.Entry, error) {
 	// TODO: We need to change the delay based on the BackoffStrategy.
 	// for now we'll just do fixed backoff.
 	delay := time.Now().Add(time.Duration(fb.Delay()))
-	qk := queue.NewQueueKeyForMessage(protocol.GetQueueName(fb), key.New(delay))
+	persistKey := key.New(delay)
+
+	qk := queue.NewQueueKeyForMessage(protocol.GetQueueName(fb), persistKey)
 
 	// Update the message with the new retry count, ttl, etc.
-	if err := adjMsgBeforeRequeueToDisk(qi, fb); err != nil {
-		return nil, err
+	if err := adjMsgBeforeRequeueToDisk(rqi.queueItem, fb); err != nil {
+		return nil, fmt.Errorf("createEntry: %w", err)
 	}
 
-	return badger.NewEntry(qk.Bytes(), qi.V).WithTTL(time.Duration(fb.Ttl())), nil
+	// TODO: Write a test for this edge case.
+	// It is possible for our new key to be after our checkpoint.
+	// Update the minimum equeued time, so that Republisher may accurately
+	// update the checkpoint once the run has completed.
+	rqi.runQueue.setMinCheckpoint(persistKey)
+
+	return badger.NewEntry(qk.Bytes(), rqi.queueItem.V).WithTTL(time.Duration(fb.Ttl())), nil
 }
 
 func adjMsgBeforeRequeueToDisk(qi queue.QueueItem, fb *flatbuf.RequeueMessage) error {
