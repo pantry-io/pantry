@@ -7,7 +7,6 @@ import (
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/nickpoorman/nats-requeue/internal/ticker"
-	"github.com/rs/zerolog/log"
 )
 
 // TODO: Set this to something much higher and allow to be pased to manager.
@@ -65,7 +64,7 @@ func (m *Manager) initBackgroundTasks() {
 
 // Check all the queue states to make sure we have not missed any.
 func (m *Manager) checkQueueStates() {
-	log.Debug().Msg("checking queue states")
+	// log.Debug().Msg("checking queue states")
 }
 
 func (m *Manager) UpsertQueueState(qk QueueKey) error {
