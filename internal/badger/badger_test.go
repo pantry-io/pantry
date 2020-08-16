@@ -10,5 +10,5 @@ func TestInstanceDir(t *testing.T) {
 	dir := "mydir"
 	instanceId := "123456"
 	path := InstanceDir(dir, instanceId)
-	assert.Equal(t, "mydir/inst_123456", path)
+	assert.Equal(t, "mydir/123456", path)
 }

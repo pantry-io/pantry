@@ -58,7 +58,6 @@ func Test_RequeueEndToEnd(t *testing.T) {
 	subject := nats.NewInbox()
 
 	clientURL := s.ClientURL()
-	// clientURL := "localhost:4222"
 	t.Logf("running nats on: %s", clientURL)
 
 	// NATS connect Options.
