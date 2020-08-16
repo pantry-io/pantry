@@ -539,7 +539,8 @@ func (c *Conn) processIngressMessage(wb *badgerInternal.BatchedWriter, msg *nats
 	// Before we write the message, we need to create the state for the
 	// queue if it doesn't yet exist.
 	stateQK := queue.NewQueueKeyForState(qk.Name, "")
-	if err := c.qManager.UpsertQueueState(stateQK); err != nil {
+	q, err := c.qManager.UpsertQueueState(stateQK)
+	if err != nil {
 		log.Err(err).
 			Interface("stateQueueKey", stateQK).
 			Msg("problem upserting queue state for ingress message")
@@ -547,7 +548,7 @@ func (c *Conn) processIngressMessage(wb *badgerInternal.BatchedWriter, msg *nats
 
 	if err := wb.SetEntry(
 		badger.NewEntry(qk.Bytes(), msg.Data).WithTTL(time.Duration(fb.Ttl())),
-		c.processIngressMessageCallback(msg)); err != nil {
+		c.processIngressMessageCallback(q, msg)); err != nil {
 		log.Err(err).Msg("problem calling SetEntry on WriteBatch")
 		if c.Opts.badgerWriteMsgErr != nil {
 			c.Opts.badgerWriteMsgErr(msg, err)
@@ -564,7 +565,7 @@ func (c *Conn) newMessageQueueKey(msg *nats.Msg, fb *flatbuf.RequeueMessage) (qu
 
 // A commit from batchedWriter will trigger a batch of callbacks,
 // one for each message.
-func (c *Conn) processIngressMessageCallback(msg *nats.Msg) func(err error) {
+func (c *Conn) processIngressMessageCallback(q *queue.Queue, msg *nats.Msg) func(err error) {
 	return func(err error) {
 		fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
 		if err != nil {
@@ -583,6 +584,9 @@ func (c *Conn) processIngressMessageCallback(msg *nats.Msg) func(err error) {
 			Str("Reply", msg.Reply).
 			Str("Subject", msg.Subject).
 			Msgf("committed message")
+
+		// Increment the number of items in the queue
+		q.Stats.IncrementCount(1)
 
 		// Ack the message
 		if err := msg.Respond(nil); err != nil {

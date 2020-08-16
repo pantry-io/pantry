@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
@@ -31,6 +32,23 @@ type Queue struct {
 	mu         sync.RWMutex
 	name       string
 	checkpoint Checkpoint
+
+	Stats *queueStats
+}
+
+type queueStats struct {
+	// Messages can expire from the TTL.
+	// TODO: Due to this we will need to rebuild the stats periodically.
+	count    int64
+	inFlight int64
+}
+
+func (q *queueStats) AddCount(num int64) int64 {
+	return atomic.AddInt64(&q.count, num)
+}
+
+func (q *queueStats) AddInFlight(num int64) int64 {
+	return atomic.AddInt64(&q.inFlight, num)
 }
 
 func createQueue(db *badger.DB, name string) (*Queue, error) {
@@ -39,6 +57,7 @@ func createQueue(db *badger.DB, name string) (*Queue, error) {
 		db:         db,
 		name:       name,
 		checkpoint: FirstMessage(name).Bytes(), // set to the min possible value
+		Stats:      &queueStats{},
 	}
 
 	// Save the queue state to disk
@@ -63,6 +82,11 @@ func createQueue(db *badger.DB, name string) (*Queue, error) {
 
 func (q *Queue) Name() string {
 	return q.name
+}
+
+// The key used to look up messages for the queue.
+func (q *Queue) queueKey() []byte {
+	return NewQueueKeyForMessage(q.name, nil).Bytes()
 }
 
 // CompareCheckpoint will compare the passed checkpoint to the existign for the
@@ -277,3 +301,65 @@ func (q *Queue) EarliestCheckpoint(until time.Time) (Checkpoint, error) {
 		}
 	})
 }
+
+// func (q *Queue) refreshStats() error {
+// 	until := time.Now()
+
+// 	checkpoint := seek.Bytes()
+// 	err := q.db.View(func(tx *badger.Txn) error {
+// 		opts := badger.DefaultIteratorOptions
+// 		opts.PrefetchValues = false
+// 		opts.Prefix = PrefixOf(seek.Bytes(), until.Bytes())
+// 		it := tx.NewIterator(opts)
+// 		defer it.Close()
+
+// 		log.Debug().
+// 			Str("seek", seek.String()).
+// 			Str("until", until.String()).
+// 			Bytes("prefix", opts.Prefix).
+// 			Msg("Queue: Range: starting iterator")
+
+// 		// Seek the prefix and check the key so we can quickly exit the iteration.
+// 		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
+// 			item := it.Item()
+// 			log.Debug().
+// 				Str("seek", seek.String()).
+// 				Str("until", until.String()).
+// 				Bytes("prefix", opts.Prefix).
+// 				Str("item.Key", ParseQueueKey(item.Key()).String()).
+// 				Msg("Queue: Range: iterator: got item")
+
+// 			if item.IsDeletedOrExpired() { // Not sure if this is necessary.
+// 				log.Debug().
+// 					Str("seek", seek.String()).
+// 					Str("until", until.String()).
+// 					Bytes("prefix", opts.Prefix).
+// 					Str("item.Key", ParseQueueKey(item.Key()).String()).
+// 					Msg("Queue: Range: iterator: item is expired")
+// 				continue
+// 			}
+
+// 			key := item.KeyCopy(nil)
+// 			if bytes.Compare(key, until.Bytes()) > 0 {
+// 				return nil // Stop if we've reached the end
+// 			}
+
+// 			// Fetch the value
+// 			value, err := item.ValueCopy(nil)
+// 			if err != nil {
+// 				return err
+// 			}
+// 			if !f(QueueItem{K: key, V: value, ExpiresAt: item.ExpiresAt()}) {
+// 				log.Debug().
+// 					Str("seek", seek.String()).
+// 					Str("until", until.String()).
+// 					Str("prefix", string(opts.Prefix)).
+// 					Msg("Queue: Range: callback returned false. Stopping range.")
+// 				return nil
+// 			}
+// 			checkpoint = key
+// 		}
+// 		return nil
+// 	})
+// 	return checkpoint, err
+// }

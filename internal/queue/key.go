@@ -22,6 +22,7 @@ import (
 
 const (
 	sep                = "."
+	sepBytes           = 1
 	QueuesNamespace    = "_q"
 	namespaceKeyBytes  = 2
 	bucketKeyBytes     = 2
@@ -63,8 +64,8 @@ func ParseQueueKey(k []byte) QueueKey {
 		// Iterate over bytes and look for delimiters.
 		// Namespace: string(k[0:2]),
 		Namespace: string(k[0:namespaceKeyBytes]),
-		Bucket:    string(k[namespaceKeyBytes : namespaceKeyBytes+bucketKeyBytes]),
-		Name:      string(k[namespaceKeyBytes+bucketKeyBytes : len(k)-key.Size]),
+		Bucket:    string(k[sepBytes+namespaceKeyBytes : sepBytes+namespaceKeyBytes+bucketKeyBytes]),
+		Name:      string(k[sepBytes+namespaceKeyBytes+bucketKeyBytes+sepBytes : len(k)-key.Size]),
 		Key:       k[len(k)-key.Size:],
 	}
 }
@@ -77,16 +78,20 @@ func (q QueueKey) Bytes() []byte {
 	ns := []byte(q.Namespace)
 	bk := []byte(q.Bucket)
 	na := []byte(q.Name)
+	sp := []byte(sep)
 	var p []byte
 	if q.IsKey() {
 		p = q.Key
 	} else {
 		p = []byte(q.Property)
 	}
-	qk := make([]byte, len(ns)+len(bk)+len(na)+len(p))
+	qk := make([]byte, len(ns)+len(sp)+len(bk)+len(sp)+len(na)+len(sp)+len(p))
 	off := copy(qk, ns)
+	off += copy(qk[off:], sp)
 	off += copy(qk[off:], bk)
+	off += copy(qk[off:], sp)
 	off += copy(qk[off:], na)
+	off += copy(qk[off:], sp)
 	copy(qk[off:], p)
 	return qk
 }

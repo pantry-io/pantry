@@ -7,6 +7,7 @@ import (
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/nickpoorman/nats-requeue/internal/ticker"
+	"github.com/rs/zerolog/log"
 )
 
 // TODO: Set this to something much higher and allow to be pased to manager.
@@ -64,20 +65,19 @@ func (m *Manager) initBackgroundTasks() {
 
 // Check all the queue states to make sure we have not missed any.
 func (m *Manager) checkQueueStates() {
-	// log.Debug().Msg("checking queue states")
+	log.Debug().Msg("checking queue states")
+	// Update the stats for each queue
+	
 }
 
-func (m *Manager) UpsertQueueState(qk QueueKey) error {
+func (m *Manager) UpsertQueueState(qk QueueKey) (*Queue, error) {
 	m.mu.RLock()
-	if _, ok := m.queues[qk.Name]; !ok {
-		m.mu.RUnlock()
-		if _, err := m.CreateQueue(qk); err != nil {
-			return err
-		}
-		return nil
-	}
+	q, ok := m.queues[qk.Name]
 	m.mu.RUnlock()
-	return nil
+	if !ok {
+		return m.CreateQueue(qk)
+	}
+	return q, nil
 }
 
 // loadFromDisk will load the queues from disk into memory.
@@ -176,4 +176,11 @@ func (m *Manager) Queues() []*Queue {
 func (m *Manager) Close() {
 	close(m.quit)
 	<-m.done
+}
+
+func (m *Manager) GetQueue(name string) (*Queue, bool) {
+	m.mu.RLock()
+	q, ok := m.queues[name]
+	m.mu.RUnlock()
+	return q, ok
 }

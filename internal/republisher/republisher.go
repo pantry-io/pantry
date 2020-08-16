@@ -384,7 +384,9 @@ func (rp *Republisher) publishMessages(ch <-chan runQueueItem) {
 		subj := string(fb.OriginalSubject())
 		data := fb.OriginalPayloadBytes()
 
+		rqi.runQueue.q.Stats.AddInFlight(1)
 		_, err := rp.nc.Request(subj, data, rp.opts.ackTimeout)
+		rqi.runQueue.q.Stats.AddInFlight(-1)
 		if err != nil {
 			log.Err(err).
 				Str("msg", string(fb.OriginalPayloadBytes())).
@@ -409,7 +411,10 @@ func (rp *Republisher) publishMessages(ch <-chan runQueueItem) {
 			log.Err(err).
 				Interface("queueItem", rqi.queueItem).
 				Msg("unable to remove message from store")
+			// Should we stop processing?
+			continue
 		}
+		rqi.runQueue.q.Stats.AddCount(-1)
 	}
 }
 
@@ -457,9 +462,10 @@ func (rp *Republisher) removeMessageFromDisk(qi queue.QueueItem, fb *flatbuf.Req
 		log.Err(err).
 			Str("msg", string(fb.OriginalPayloadBytes())).
 			Msg("error removing message from disk")
-	}
 
-	return fmt.Errorf("removeMessageFromDisk: %w", err)
+		return fmt.Errorf("removeMessageFromDisk: %w", err)
+	}
+	return nil
 }
 
 // This should be called with a lock already held on rp.

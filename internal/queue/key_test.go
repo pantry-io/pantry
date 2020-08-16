@@ -40,3 +40,35 @@ func TestParseQueueKey(t *testing.T) {
 	assert.Equal(t, queueName, qk2.Name, "qk2 name should be testqueue")
 	assert.Equal(t, k1, qk2.Key, "qk2 name should be testqueue")
 }
+
+func TestNewQueueKeyForMessage(t *testing.T) {
+	queueName := "testqueue"
+	qk := NewQueueKeyForMessage(queueName, key.Min)
+	want := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    MessagesBucket,
+		Name:      queueName,
+		Key:       key.Min,
+	}
+	assert.Equal(t, want, qk)
+	assert.Equal(t, string(want.Bytes()), string(qk.Bytes()))
+}
+
+func TestPrefixOf(t *testing.T) {
+	want := "_q._m.testqueue."
+	queueName := "testqueue"
+	qk1 := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    MessagesBucket,
+		Name:      queueName,
+		Key:       key.Min,
+	}
+	qk2 := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    MessagesBucket,
+		Name:      queueName,
+		Key:       key.Max,
+	}
+	prefix := PrefixOf(qk1.Bytes(), qk2.Bytes())
+	assert.Equal(t, want, string(prefix))
+}
