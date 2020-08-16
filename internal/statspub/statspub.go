@@ -7,11 +7,13 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/internal/queue"
 	"github.com/nickpoorman/nats-requeue/internal/ticker"
+	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog/log"
 )
 
 const (
 	DefaultStatsPublisherInterval = 5 * time.Second
+	StatsSubject                  = "_requeue._stats"
 )
 
 // Options can be used to set custom options for a StatsPublisher.
@@ -89,7 +91,7 @@ func (sp *StatsPublisher) initBackgroundTasks() {
 			t.Stop()
 		}()
 		t.Loop(func() bool {
-			sp.publish()
+			_ = sp.publish()
 			return true
 		})
 	}()
@@ -100,18 +102,26 @@ func (sp *StatsPublisher) Close() {
 	<-sp.done
 }
 
-func (sp *StatsPublisher) publish() {
+func (sp *StatsPublisher) publish() error {
 	log.Debug().Msg("StatsPublisher: publish: triggered.")
 
-	// stats := make(map[string]interface{})
+	queues := sp.qManager.Queues()
 
-	// // TODO: Collect the stats from the queue manager
-	// queues := sp.qManager.Queues()
-	// for _, q := range queues {
-	// 	sm := q.Stats.ToMap()
-	// 	// stats[]
+	ism := &protocol.InstanceStatsMessage{
+		InstanceId: sp.instanceId,
+		Queues:     make([]protocol.QueueStatsMessage, len(queues)),
+	}
 
-	// }
+	// Collect the stats from the queues.
+	for i, q := range queues {
+		ism.Queues[i] = q.Stats.QueueStatsMessage()
+	}
 
-	// TODO: Emit the stats on a topic
+	// Emit the stats on a topic
+	err := sp.nc.Publish(StatsSubject, ism.Bytes())
+	if err != nil {
+		log.Err(err).Msg("problem publishing stats")
+	}
+
+	return nil
 }

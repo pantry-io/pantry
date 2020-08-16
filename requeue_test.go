@@ -40,7 +40,7 @@ func setup(t *testing.T) string {
 }
 
 func Test_RequeueEndToEnd(t *testing.T) {
-	zerolog.SetGlobalLevel(zerolog.NoLevel)
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	done := true
 
 	s := natsserver.RunDefaultServer()

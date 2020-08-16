@@ -30,45 +30,50 @@ func setup(t *testing.T) string {
 	return dir
 }
 
+func TestNewQueue(t *testing.T) {
+	// Create a tmp badger database in memory.
+	openOpts := badger.DefaultOptions("").
+		WithInMemory(true).
+		WithLoggingLevel(badger.ERROR)
+	db, err := badger.Open(openOpts)
+	assert.NoError(t, err)
+	defer db.Close()
+
+	queueName := "testqueue"
+	q := NewQueue(db, queueName)
+	assert.Equal(t, queueName, q.name, "Queue names should be equal")
+}
+
 func TestEarliestCheckpoint(t *testing.T) {
 	// Create a tmp badger database
 	dir := setup(t)
-	openOpts := badger.DefaultOptions(dir)
+	openOpts := badger.DefaultOptions(dir).
+		WithLoggingLevel(badger.ERROR)
 	db, err := badger.Open(openOpts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
+	defer db.Close()
 
 	// Create a Queue
 	queueName := "testqueue"
 	q, err := createQueue(db, queueName)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
 	keys := make([]QueueKey, 0, 10)
 
 	// Add some messages to the queue
 	for i := 0; i < 10; i++ {
-		qk := QueueKey{
-			Namespace: QueuesNamespace,
-			Name:      queueName,
-			Bucket:    MessagesBucket,
-			Key:       key.New(time.Now()),
-		}
+		qk := NewQueueKeyForMessage(queueName, key.New(time.Now()))
 		keys = append(keys, qk)
 
-		if err := db.Update(func(txn *badger.Txn) error {
+		err := db.Update(func(txn *badger.Txn) error {
 			return txn.SetEntry(
 				badger.NewEntry(
 					qk.Bytes(),
 					[]byte(fmt.Sprintf("message body %d", i)),
 				),
 			)
-		}); err != nil {
-			t.Fatal(err)
-		}
-		t.Logf("Added key [%s] [%d] \n", qk.PropertyPath(), i)
+		})
+		assert.NoError(t, err)
 	}
 
 	// Set the checkpoint to the second to last one

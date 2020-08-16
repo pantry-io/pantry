@@ -4,12 +4,24 @@ import (
 	"encoding"
 
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/nats-io/nats.go"
 	"github.com/nickpoorman/nats-requeue/flatbuf"
 )
 
 type InstanceStatsMessage struct {
 	InstanceId string
 	Queues     []QueueStatsMessage
+}
+
+func DefaultInstanceStatsMessage() InstanceStatsMessage {
+	return InstanceStatsMessage{}
+}
+
+func InstanceStatsMessageFromNATS(msg *nats.Msg) InstanceStatsMessage {
+	m := DefaultInstanceStatsMessage()
+	// Unmarshal currently doesn't return any errors
+	_ = m.UnmarshalBinary(msg.Data)
+	return m
 }
 
 func (i *InstanceStatsMessage) Bytes() []byte {
@@ -65,8 +77,8 @@ func (i *InstanceStatsMessage) fromFlatbuf(m *flatbuf.InstanceStatsMessage) {
 
 type QueueStatsMessage struct {
 	QueueName string
-	Enqueued  uint64
-	InFlight  uint64
+	Enqueued  int64
+	InFlight  int64
 }
 
 func (q *QueueStatsMessage) Bytes() []byte {

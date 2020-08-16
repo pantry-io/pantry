@@ -3,7 +3,6 @@ package key
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -108,11 +107,14 @@ func (k Key) InstanceID() uint64 {
 	return binary.BigEndian.Uint64(k[16:24])
 }
 
-// Do not try to sort the string representation.
+// Do not try to sort the String representation.
 func (k Key) String() string {
-	return base64.StdEncoding.EncodeToString(k)
+	return k.Print()
 }
 
+// Prints a readable representation of the key.
+// Do not try to sort the Print representation.
+// e.g., _q._m.testqueue.1.1.10846887956856003301
 func (k Key) Print() string {
 	return fmt.Sprintf(
 		"%d.%d.%d",

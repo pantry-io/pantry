@@ -1,8 +1,10 @@
 package queue
 
 import (
+	"bytes"
 	"fmt"
 
+	"github.com/nickpoorman/nats-requeue/internal/debug"
 	"github.com/nickpoorman/nats-requeue/internal/key"
 )
 
@@ -59,14 +61,14 @@ func NewQueueKeyForState(queue, property string) QueueKey {
 }
 
 func ParseQueueKey(k []byte) QueueKey {
+	spl := bytes.Split(k, []byte(sep))
+	debug.Assert(len(spl) == 4, fmt.Errorf("invalid QueueKey: %v", k))
+	debug.Assert(len(spl[3]) == key.Size, fmt.Errorf("invalid QueueKey.Key size: Expected=%d Got=%d QueueKey=%v", key.Size, len(spl[3]), spl[3]))
 	return QueueKey{
-		// TODO: Don't hard code these lengths.
-		// Iterate over bytes and look for delimiters.
-		// Namespace: string(k[0:2]),
-		Namespace: string(k[0:namespaceKeyBytes]),
-		Bucket:    string(k[sepBytes+namespaceKeyBytes : sepBytes+namespaceKeyBytes+bucketKeyBytes]),
-		Name:      string(k[sepBytes+namespaceKeyBytes+bucketKeyBytes+sepBytes : len(k)-key.Size]),
-		Key:       k[len(k)-key.Size:],
+		Namespace: string(spl[0]),
+		Bucket:    string(spl[1]),
+		Name:      string(spl[2]),
+		Key:       spl[3],
 	}
 }
 

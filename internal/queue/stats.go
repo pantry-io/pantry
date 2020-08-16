@@ -7,6 +7,7 @@ import (
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/nickpoorman/nats-requeue/internal/ticker"
+	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog/log"
 )
 
@@ -136,4 +137,16 @@ func (qs *queueStats) ToMap() map[string]interface{} {
 	}
 
 	return m
+}
+
+func (qs *queueStats) QueueStatsMessage() protocol.QueueStatsMessage {
+	enqueued := qs.count
+	if enqueued < 0 {
+		enqueued = 0
+	}
+	return protocol.QueueStatsMessage{
+		QueueName: qs.queueName,
+		Enqueued:  enqueued,
+		InFlight:  qs.inFlight,
+	}
 }

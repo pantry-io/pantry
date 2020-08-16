@@ -7,6 +7,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
+	badgerInternal "github.com/nickpoorman/nats-requeue/internal/badger"
 	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/rs/zerolog/log"
 )
@@ -26,9 +27,10 @@ func (c Checkpoint) Key() key.Key {
 }
 
 type Queue struct {
-	quit chan struct{}
-	done chan struct{}
-	db   *badger.DB
+	quit        chan struct{}
+	done        chan struct{}
+	db          *badger.DB
+	batchWriter *badgerInternal.BatchedWriter
 
 	mu         sync.RWMutex
 	name       string
@@ -38,9 +40,12 @@ type Queue struct {
 
 func NewQueue(db *badger.DB, name string) *Queue {
 	q := &Queue{
-		quit: make(chan struct{}),
-		done: make(chan struct{}),
-		db:   db,
+		quit:        make(chan struct{}),
+		done:        make(chan struct{}),
+		db:          db,
+		batchWriter: badgerInternal.NewBatchedWriter(db, 15*time.Millisecond),
+		name:        name,
+		checkpoint:  FirstMessage(name).Bytes(), // set to the min possible value
 	}
 	if name != "" {
 		q.Stats = newQueueStats(db, name)
@@ -49,6 +54,9 @@ func NewQueue(db *badger.DB, name string) *Queue {
 	go func() {
 		<-q.quit
 		q.mu.Lock()
+		if q.batchWriter != nil {
+			q.batchWriter.Close()
+		}
 		if q.Stats != nil {
 			q.Stats.Close()
 		}
@@ -58,6 +66,7 @@ func NewQueue(db *badger.DB, name string) *Queue {
 	return q
 }
 
+// TODO: Combine this with NewQueue
 func createQueue(db *badger.DB, name string) (*Queue, error) {
 	// Create the queue and persist it.
 	q := NewQueue(db, name)
@@ -175,41 +184,13 @@ func (q *Queue) SetName(name string) {
 	q.mu.Unlock()
 }
 
-type QueueItem struct {
-	// K is the key of the item.
-	K []byte
-
-	// V is the value of the item.
-	V []byte
-
-	// ExpiresAt is a Unix time, the number of seconds elapsed
-	// since January 1, 1970 UTC.
-	ExpiresAt uint64
-}
-
-// IsExpired returns true if this item has expired.
-func (qi QueueItem) IsExpired() bool {
-	return qi.ExpiresAt <= uint64(time.Now().Unix())
-}
-
-// ExpiresAtTime returns the Time this item will expire.
-func (qi QueueItem) ExpiresAtTime() time.Time {
-	return time.Unix(int64(qi.ExpiresAt), 0)
-}
-
-// DurationUntilExpires returns a duration indicating how much time until this item
-// expires.
-func (qi QueueItem) DurationUntilExpires() time.Duration {
-	return time.Until(qi.ExpiresAtTime())
-}
-
 // Range performs a range query against the storage. It calls f sequentially for
 // each key and value present in the store. If f returns false, range stops the
 // iteration. The implementation must guarantee that the keys are
 // lexigraphically sorted.
 // The checkpoint returned will either be the original seek passed to this
 // function or the last successfully processed key. If f returns false, the key
-// for that iterantion will not be the checkpoint.
+// for that iteration will not be the checkpoint.
 func (q *Queue) Range(seek, until QueueKey, f func(QueueItem) bool) (Checkpoint, error) {
 	checkpoint := seek.Bytes()
 	err := q.db.View(func(tx *badger.Txn) error {
@@ -298,7 +279,7 @@ func (q *Queue) EarliestCheckpoint(until time.Time) (Checkpoint, error) {
 	log.Debug().
 		Str("queue", name).
 		Str("checkpoint", checkpoint.String()).
-		Msg("Queue: ReadFromCheckpoint: calling range")
+		Msg("Queue: EarliestCheckpoint: calling range")
 
 	first := true
 	return q.Range(FirstMessage(name), untilQK, func(qi QueueItem) bool {
@@ -312,4 +293,26 @@ func (q *Queue) EarliestCheckpoint(until time.Time) (Checkpoint, error) {
 			return false
 		}
 	})
+}
+
+// AddMessage will add a message to the queue and execute the callback function cb once committed.
+// Any TTL less than or equal to zero will be ignored.
+func (q *Queue) AddMessage(key []byte, value []byte, ttl time.Duration, cb func(error)) error {
+	entry := badger.NewEntry(key, value)
+	if ttl > 0 {
+		entry = entry.WithTTL(ttl)
+	}
+	if err := q.batchWriter.SetEntry(entry, func(e error) {
+		// Update the stats.
+		q.Stats.AddCount(1)
+		// Exec the callback.
+		if cb != nil {
+			cb(e)
+		}
+	}); err != nil {
+		err = fmt.Errorf("add message: %w", err)
+		log.Err(err).Msg("problem calling SetEntry")
+		return err
+	}
+	return nil
 }

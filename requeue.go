@@ -506,15 +506,12 @@ func (c *Conn) initNatsConsumer() {
 	c.mu.RLock()
 	natsConsumer := c.closers.natsConsumers
 	defer natsConsumer.Done()
-
-	wb := badgerInternal.NewBatchedWriter(c.badgerDB, 15*time.Millisecond)
-	defer wb.Close()
 	c.mu.RUnlock()
 
 	for {
 		select {
 		case msg := <-c.natsMsgCh:
-			c.processIngressMessage(wb, msg)
+			c.processIngressMessage(msg)
 		case <-natsConsumer.HasBeenClosed():
 			// The consumer has been asked to close.
 			// Flushing will be handled by the above defer wb.Close()
@@ -523,9 +520,8 @@ func (c *Conn) initNatsConsumer() {
 	}
 }
 
-func (c *Conn) processIngressMessage(wb *badgerInternal.BatchedWriter, msg *nats.Msg) {
+func (c *Conn) processIngressMessage(msg *nats.Msg) {
 	fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
-	// decoded := RequeueMessageFromNATS(msg)
 	log.Debug().
 		Str("msg", string(fb.OriginalPayloadBytes())).
 		Msg("received a message")
@@ -546,10 +542,12 @@ func (c *Conn) processIngressMessage(wb *badgerInternal.BatchedWriter, msg *nats
 			Msg("problem upserting queue state for ingress message")
 	}
 
-	if err := wb.SetEntry(
-		badger.NewEntry(qk.Bytes(), msg.Data).WithTTL(time.Duration(fb.Ttl())),
-		c.processIngressMessageCallback(q, msg)); err != nil {
-		log.Err(err).Msg("problem calling SetEntry on WriteBatch")
+	if err := q.AddMessage(
+		qk.Bytes(),                              // key
+		msg.Data,                                // value
+		time.Duration(fb.Ttl()),                 // ttl
+		c.processIngressMessageCallback(q, msg), // commit callback
+	); err != nil {
 		if c.Opts.badgerWriteMsgErr != nil {
 			c.Opts.badgerWriteMsgErr(msg, err)
 		}
@@ -584,9 +582,6 @@ func (c *Conn) processIngressMessageCallback(q *queue.Queue, msg *nats.Msg) func
 			Str("Reply", msg.Reply).
 			Str("Subject", msg.Subject).
 			Msgf("committed message")
-
-		// Increment the number of items in the queue
-		q.Stats.AddCount(1)
 
 		// Ack the message
 		if err := msg.Respond(nil); err != nil {

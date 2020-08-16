@@ -2,6 +2,7 @@ package queue
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,7 +28,48 @@ func TestParseQueueKey(t *testing.T) {
 	k1 := key.New(t1)
 	qk1 := NewQueueKeyForMessage(queueName, k1)
 
-	qk1.PropertyPath()
+	str := qk1.PropertyPath()
+	assert.Equal(t, fmt.Sprintf("_q._m.testqueue.%s", qk1.Key.String()), str)
+
+	// Get bytes
+	by := qk1.Bytes()
+
+	// Parse the bytes
+	qk2 := ParseQueueKey(by)
+
+	assert.Equal(t, QueuesNamespace, qk2.Namespace, "qk2 namespace should be correct")
+	assert.Equal(t, MessagesBucket, qk2.Bucket, "qk2 namespace should be correct")
+	assert.Equal(t, queueName, qk2.Name, "qk2 name should be testqueue")
+	assert.Equal(t, k1, qk2.Key, "qk2 name should be testqueue")
+}
+
+func TestParseQueueKeyMin(t *testing.T) {
+	queueName := "testqueue"
+	k1 := key.Min
+	qk1 := NewQueueKeyForMessage(queueName, k1)
+
+	str := qk1.PropertyPath()
+	assert.Equal(t, "_q._m.testqueue.0.0.0", str)
+
+	// Get bytes
+	by := qk1.Bytes()
+
+	// Parse the bytes
+	qk2 := ParseQueueKey(by)
+
+	assert.Equal(t, QueuesNamespace, qk2.Namespace, "qk2 namespace should be correct")
+	assert.Equal(t, MessagesBucket, qk2.Bucket, "qk2 namespace should be correct")
+	assert.Equal(t, queueName, qk2.Name, "qk2 name should be testqueue")
+	assert.Equal(t, k1, qk2.Key, "qk2 name should be testqueue")
+}
+
+func TestParseQueueKeyMax(t *testing.T) {
+	queueName := "testqueue"
+	k1 := key.Max
+	qk1 := NewQueueKeyForMessage(queueName, k1)
+
+	str := qk1.PropertyPath()
+	assert.Equal(t, "_q._m.testqueue.18446744073709551615.18446744073709551615.18446744073709551615", str)
 
 	// Get bytes
 	by := qk1.Bytes()

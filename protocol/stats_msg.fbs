@@ -14,8 +14,8 @@ table QueueStatsMessage {
     queue_name: string;
 
     /// The number of messages in the queue.
-    enqueued: ulong;
+    enqueued: long;
 
     /// The number of in flight messages waiting to be acknowledged.
-    in_flight: ulong;
+    in_flight: long;
 }

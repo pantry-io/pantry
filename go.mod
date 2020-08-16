@@ -4,6 +4,7 @@ go 1.14
 
 require (
 	github.com/cenkalti/backoff/v4 v4.0.2
+	github.com/dgraph-io/badger v1.6.1
 	github.com/dgraph-io/badger/v2 v2.0.1-rc1.0.20200718033852-37ee16d8ad1c
 	github.com/gofrs/uuid v3.3.0+incompatible
 	github.com/google/flatbuffers v1.12.0

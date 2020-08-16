@@ -104,31 +104,31 @@ func (rcv *QueueStatsMessage) QueueName() []byte {
 
 /// The name of the queue.
 /// The number of messages in the queue.
-func (rcv *QueueStatsMessage) Enqueued() uint64 {
+func (rcv *QueueStatsMessage) Enqueued() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
 /// The number of messages in the queue.
-func (rcv *QueueStatsMessage) MutateEnqueued(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(6, n)
+func (rcv *QueueStatsMessage) MutateEnqueued(n int64) bool {
+	return rcv._tab.MutateInt64Slot(6, n)
 }
 
 /// The number of in flight messages waiting to be acknowledged.
-func (rcv *QueueStatsMessage) InFlight() uint64 {
+func (rcv *QueueStatsMessage) InFlight() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
 	return 0
 }
 
 /// The number of in flight messages waiting to be acknowledged.
-func (rcv *QueueStatsMessage) MutateInFlight(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(8, n)
+func (rcv *QueueStatsMessage) MutateInFlight(n int64) bool {
+	return rcv._tab.MutateInt64Slot(8, n)
 }
 
 func QueueStatsMessageStart(builder *flatbuffers.Builder) {
@@ -137,11 +137,11 @@ func QueueStatsMessageStart(builder *flatbuffers.Builder) {
 func QueueStatsMessageAddQueueName(builder *flatbuffers.Builder, queueName flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(queueName), 0)
 }
-func QueueStatsMessageAddEnqueued(builder *flatbuffers.Builder, enqueued uint64) {
-	builder.PrependUint64Slot(1, enqueued, 0)
+func QueueStatsMessageAddEnqueued(builder *flatbuffers.Builder, enqueued int64) {
+	builder.PrependInt64Slot(1, enqueued, 0)
 }
-func QueueStatsMessageAddInFlight(builder *flatbuffers.Builder, inFlight uint64) {
-	builder.PrependUint64Slot(2, inFlight, 0)
+func QueueStatsMessageAddInFlight(builder *flatbuffers.Builder, inFlight int64) {
+	builder.PrependInt64Slot(2, inFlight, 0)
 }
 func QueueStatsMessageEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
