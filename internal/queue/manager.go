@@ -106,7 +106,7 @@ func (m *Manager) loadFromDisk() error {
 		prefix := []byte(QueueKey{
 			Namespace: QueuesNamespace,
 			Bucket:    StateBucket,
-		}.BucketPath() + sep)
+		}.BucketPrefix())
 
 		q := NewQueue(m.db, "")
 

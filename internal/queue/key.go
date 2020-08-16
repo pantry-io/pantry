@@ -61,8 +61,8 @@ func NewQueueKeyForState(queue, property string) QueueKey {
 }
 
 func ParseQueueKey(k []byte) QueueKey {
-	spl := bytes.Split(k, []byte(sep))
-	debug.Assert(len(spl) == 4, fmt.Errorf("invalid QueueKey: Bytes=%v String=%s", k, string(k)))
+	spl := bytes.SplitN(k, []byte(sep), 4)
+	// The last slice will be the remainer. Assert it's the correct length.
 	debug.Assert(len(spl[3]) == key.Size, fmt.Errorf("invalid QueueKey.Key size: Expected=%d Got=%d QueueKey=%v", key.Size, len(spl[3]), spl[3]))
 	return QueueKey{
 		Namespace: string(spl[0]),

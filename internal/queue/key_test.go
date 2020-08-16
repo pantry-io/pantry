@@ -83,6 +83,34 @@ func TestParseQueueKeyMax(t *testing.T) {
 	assert.Equal(t, k1, qk2.Key, "qk2 name should be testqueue")
 }
 
+func TestParseQueueKeyIncludedSepBytes(t *testing.T) {
+	// If we have a QueueKey with bytes the same as the seperator we could
+	// end up with a problem if the ParseQueueKey does not respect the number of
+	// times it should split on the seperator.
+	queueName := "testqueue"
+	k := make([]byte, key.Size)
+	for i := range k {
+		k[i] = 255
+	}
+
+	// Add in our sep in a few spots. An incorrect implementation would cause
+	// the seperator to be matched on which causes the length of the key checked
+	// below to be incorrect.
+	copy(k[2:], []byte(sep))
+	copy(k[4:], []byte(sep))
+
+	var k1 key.Key = k
+	qk1 := NewQueueKeyForMessage(queueName, k1)
+
+	// Get bytes
+	by := qk1.Bytes()
+
+	// Parse the bytes
+	qk2 := ParseQueueKey(by)
+
+	assert.Equal(t, key.Size, len(qk2.Key.Bytes()))
+}
+
 func TestNewQueueKeyForMessage(t *testing.T) {
 	queueName := "testqueue"
 	qk := NewQueueKeyForMessage(queueName, key.Min)
