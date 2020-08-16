@@ -57,18 +57,8 @@ func TestNewQueueKeyForMessage(t *testing.T) {
 func TestPrefixOf(t *testing.T) {
 	want := "_q._m.testqueue."
 	queueName := "testqueue"
-	qk1 := QueueKey{
-		Namespace: QueuesNamespace,
-		Bucket:    MessagesBucket,
-		Name:      queueName,
-		Key:       key.Min,
-	}
-	qk2 := QueueKey{
-		Namespace: QueuesNamespace,
-		Bucket:    MessagesBucket,
-		Name:      queueName,
-		Key:       key.Max,
-	}
+	qk1 := FirstMessage(queueName)
+	qk2 := LastMessage(queueName)
 	prefix := PrefixOf(qk1.Bytes(), qk2.Bytes())
 	assert.Equal(t, want, string(prefix))
 }

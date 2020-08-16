@@ -84,14 +84,3 @@ func TestEarliestCheckpoint(t *testing.T) {
 	}
 	assert.Equal(t, keys[0].PropertyPath(), ParseQueueKey(earliest).PropertyPath(), "they should be equal")
 }
-
-func TestQueue_queueKey(t *testing.T) {
-	queueName := "testqueue"
-	q := &Queue{
-		name: queueName,
-	}
-	assert.Equal(t, []byte(fmt.Sprintf(
-		"%s%s%s%s%s%s",
-		QueuesNamespace, sep, MessagesBucket, sep, queueName, sep,
-	)), q.queueKey())
-}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
@@ -27,38 +26,42 @@ func (c Checkpoint) Key() key.Key {
 }
 
 type Queue struct {
-	db *badger.DB
+	quit chan struct{}
+	done chan struct{}
+	db   *badger.DB
 
 	mu         sync.RWMutex
 	name       string
 	checkpoint Checkpoint
-
-	Stats *queueStats
+	Stats      *queueStats
 }
 
-type queueStats struct {
-	// Messages can expire from the TTL.
-	// TODO: Due to this we will need to rebuild the stats periodically.
-	count    int64
-	inFlight int64
-}
+func NewQueue(db *badger.DB, name string) *Queue {
+	q := &Queue{
+		quit: make(chan struct{}),
+		done: make(chan struct{}),
+		db:   db,
+	}
+	if name != "" {
+		q.Stats = newQueueStats(db, name)
+	}
 
-func (q *queueStats) AddCount(num int64) int64 {
-	return atomic.AddInt64(&q.count, num)
-}
-
-func (q *queueStats) AddInFlight(num int64) int64 {
-	return atomic.AddInt64(&q.inFlight, num)
+	go func() {
+		<-q.quit
+		q.mu.Lock()
+		if q.Stats != nil {
+			q.Stats.Close()
+		}
+		q.mu.Unlock()
+		close(q.done)
+	}()
+	return q
 }
 
 func createQueue(db *badger.DB, name string) (*Queue, error) {
 	// Create the queue and persist it.
-	q := &Queue{
-		db:         db,
-		name:       name,
-		checkpoint: FirstMessage(name).Bytes(), // set to the min possible value
-		Stats:      &queueStats{},
-	}
+	q := NewQueue(db, name)
+	q.checkpoint = FirstMessage(name).Bytes() // set to the min possible value
 
 	// Save the queue state to disk
 	err := q.db.Update(func(txn *badger.Txn) error {
@@ -80,13 +83,14 @@ func createQueue(db *badger.DB, name string) (*Queue, error) {
 	return q, err
 }
 
-func (q *Queue) Name() string {
-	return q.name
+// Close will stop the queue background tasks.
+func (q *Queue) Close() {
+	close(q.quit)
+	<-q.done
 }
 
-// The key used to look up messages for the queue.
-func (q *Queue) queueKey() []byte {
-	return NewQueueKeyForMessage(q.name, nil).Bytes()
+func (q *Queue) Name() string {
+	return q.name
 }
 
 // CompareCheckpoint will compare the passed checkpoint to the existign for the
@@ -160,7 +164,15 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 }
 
 func (q *Queue) SetName(name string) {
+	q.mu.Lock()
 	q.name = name
+
+	// Chaning the name requires us to update stats
+	if q.Stats != nil {
+		q.Stats.SetName(name)
+	}
+
+	q.mu.Unlock()
 }
 
 type QueueItem struct {
@@ -301,65 +313,3 @@ func (q *Queue) EarliestCheckpoint(until time.Time) (Checkpoint, error) {
 		}
 	})
 }
-
-// func (q *Queue) refreshStats() error {
-// 	until := time.Now()
-
-// 	checkpoint := seek.Bytes()
-// 	err := q.db.View(func(tx *badger.Txn) error {
-// 		opts := badger.DefaultIteratorOptions
-// 		opts.PrefetchValues = false
-// 		opts.Prefix = PrefixOf(seek.Bytes(), until.Bytes())
-// 		it := tx.NewIterator(opts)
-// 		defer it.Close()
-
-// 		log.Debug().
-// 			Str("seek", seek.String()).
-// 			Str("until", until.String()).
-// 			Bytes("prefix", opts.Prefix).
-// 			Msg("Queue: Range: starting iterator")
-
-// 		// Seek the prefix and check the key so we can quickly exit the iteration.
-// 		for it.Seek(seek.Bytes()); it.Valid(); it.Next() {
-// 			item := it.Item()
-// 			log.Debug().
-// 				Str("seek", seek.String()).
-// 				Str("until", until.String()).
-// 				Bytes("prefix", opts.Prefix).
-// 				Str("item.Key", ParseQueueKey(item.Key()).String()).
-// 				Msg("Queue: Range: iterator: got item")
-
-// 			if item.IsDeletedOrExpired() { // Not sure if this is necessary.
-// 				log.Debug().
-// 					Str("seek", seek.String()).
-// 					Str("until", until.String()).
-// 					Bytes("prefix", opts.Prefix).
-// 					Str("item.Key", ParseQueueKey(item.Key()).String()).
-// 					Msg("Queue: Range: iterator: item is expired")
-// 				continue
-// 			}
-
-// 			key := item.KeyCopy(nil)
-// 			if bytes.Compare(key, until.Bytes()) > 0 {
-// 				return nil // Stop if we've reached the end
-// 			}
-
-// 			// Fetch the value
-// 			value, err := item.ValueCopy(nil)
-// 			if err != nil {
-// 				return err
-// 			}
-// 			if !f(QueueItem{K: key, V: value, ExpiresAt: item.ExpiresAt()}) {
-// 				log.Debug().
-// 					Str("seek", seek.String()).
-// 					Str("until", until.String()).
-// 					Str("prefix", string(opts.Prefix)).
-// 					Msg("Queue: Range: callback returned false. Stopping range.")
-// 				return nil
-// 			}
-// 			checkpoint = key
-// 		}
-// 		return nil
-// 	})
-// 	return checkpoint, err
-// }

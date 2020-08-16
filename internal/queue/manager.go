@@ -43,10 +43,24 @@ func NewManager(db *badger.DB) (*Manager, error) {
 
 func (m *Manager) initBackgroundTasks() {
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		wg.Wait()
 		close(m.done)
+	}()
+	go func() {
+		defer wg.Done()
+		<-m.quit
+		m.mu.Lock()
+		var cWg sync.WaitGroup
+		cWg.Add(len(m.queues))
+		for _, v := range m.queues {
+			go func(q *Queue) {
+				defer cWg.Done()
+				q.Close()
+			}(v)
+		}
+		cWg.Wait()
 	}()
 
 	go func() {
@@ -67,7 +81,7 @@ func (m *Manager) initBackgroundTasks() {
 func (m *Manager) checkQueueStates() {
 	log.Debug().Msg("checking queue states")
 	// Update the stats for each queue
-	
+
 }
 
 func (m *Manager) UpsertQueueState(qk QueueKey) (*Queue, error) {
@@ -94,11 +108,11 @@ func (m *Manager) loadFromDisk() error {
 			Bucket:    StateBucket,
 		}.BucketPath() + ".")
 
-		q := &Queue{}
+		q := NewQueue(m.db, "")
 
 		addQ := func() {
 			m.addQueue(q)
-			q = &Queue{}
+			q = NewQueue(m.db, "")
 		}
 
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
@@ -139,18 +153,18 @@ func (m *Manager) CreateQueue(qk QueueKey) (*Queue, error) {
 	}
 
 	// Only create the queue if it doesn't already exist.
-	if q, ok := m.queues[qk.Name]; ok {
+	if q, ok := m.queues[name]; ok {
 		// It exists and we don't need to create it.
 		return q, nil
 	}
 
-	queue, err := createQueue(m.db, qk.Name)
+	queue, err := createQueue(m.db, name)
 	if err != nil {
 		return nil, err
 	}
 
 	// Save it in memory
-	m.queues[qk.Name] = queue
+	m.addQueue(queue)
 
 	return queue, nil
 }
