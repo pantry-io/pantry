@@ -62,7 +62,7 @@ func NewQueueKeyForState(queue, property string) QueueKey {
 
 func ParseQueueKey(k []byte) QueueKey {
 	spl := bytes.Split(k, []byte(sep))
-	debug.Assert(len(spl) == 4, fmt.Errorf("invalid QueueKey: %v", k))
+	debug.Assert(len(spl) == 4, fmt.Errorf("invalid QueueKey: Bytes=%v String=%s", k, string(k)))
 	debug.Assert(len(spl[3]) == key.Size, fmt.Errorf("invalid QueueKey.Key size: Expected=%d Got=%d QueueKey=%v", key.Size, len(spl[3]), spl[3]))
 	return QueueKey{
 		Namespace: string(spl[0]),
@@ -99,15 +99,27 @@ func (q QueueKey) Bytes() []byte {
 }
 
 func (q QueueKey) BucketPath() string {
-	return fmt.Sprintf("%s.%s", q.Namespace, q.Bucket)
+	return fmt.Sprintf("%s%s%s", q.Namespace, sep, q.Bucket)
+}
+
+func (q QueueKey) BucketPrefix() string {
+	return fmt.Sprintf("%s%s", q.BucketPath(), sep)
 }
 
 func (q QueueKey) NamePath() string {
-	return fmt.Sprintf("%s.%s.%s", q.Namespace, q.Bucket, q.Name)
+	return fmt.Sprintf("%s%s", q.BucketPrefix(), q.Name)
+}
+
+func (q QueueKey) NamePrefix() string {
+	return fmt.Sprintf("%s%s", q.NamePath(), sep)
 }
 
 func (q QueueKey) PropertyPath() string {
-	return fmt.Sprintf("%s.%s.%s.%s", q.Namespace, q.Bucket, q.Name, q.PropertyString())
+	return fmt.Sprintf("%s%s", q.NamePrefix(), q.PropertyString())
+}
+
+func (q QueueKey) PropertyPrefix() string {
+	return fmt.Sprintf("%s%s", q.PropertyPath(), sep)
 }
 
 func (q QueueKey) PropertyString() string {

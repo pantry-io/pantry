@@ -104,3 +104,69 @@ func TestPrefixOf(t *testing.T) {
 	prefix := PrefixOf(qk1.Bytes(), qk2.Bytes())
 	assert.Equal(t, want, string(prefix))
 }
+
+func TestBucketPath(t *testing.T) {
+	want := "_q._s"
+	qk := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    StateBucket,
+		Name:      "testqueue",
+		Property:  "foo",
+	}
+	assert.Equal(t, want, qk.BucketPath())
+}
+
+func TestBucketPrefix(t *testing.T) {
+	want := "_q._s."
+	qk := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    StateBucket,
+		Name:      "testqueue",
+		Property:  "foo",
+	}
+	assert.Equal(t, want, qk.BucketPrefix())
+}
+
+func TestNamePath(t *testing.T) {
+	want := "_q._s.testqueue"
+	qk := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    StateBucket,
+		Name:      "testqueue",
+		Property:  "foo",
+	}
+	assert.Equal(t, want, qk.NamePath())
+}
+
+func TestNamePrefix(t *testing.T) {
+	want := "_q._s.testqueue."
+	qk := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    StateBucket,
+		Name:      "testqueue",
+		Property:  "foo",
+	}
+	assert.Equal(t, want, qk.NamePrefix())
+}
+
+func TestPropertyPath(t *testing.T) {
+	want := "_q._s.testqueue.foo"
+	qk := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    StateBucket,
+		Name:      "testqueue",
+		Property:  "foo",
+	}
+	assert.Equal(t, want, qk.PropertyPath())
+}
+
+func TestPropertyPrefix(t *testing.T) {
+	want := "_q._s.testqueue.foo."
+	qk := QueueKey{
+		Namespace: QueuesNamespace,
+		Bucket:    StateBucket,
+		Name:      "testqueue",
+		Property:  "foo",
+	}
+	assert.Equal(t, want, qk.PropertyPrefix())
+}
