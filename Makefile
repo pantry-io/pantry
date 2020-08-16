@@ -19,6 +19,7 @@ vet:
 
 protocol:
 	flatc --gen-mutable --go-namespace flatbuf --filename-suffix .gen --gen-onefile --go -o ./flatbuf protocol/requeue_msg.fbs
+	flatc --gen-mutable --go-namespace flatbuf --filename-suffix .gen --gen-onefile --go -o ./flatbuf protocol/stats_msg.fbs
 
 left:
 	GOMAXPROCS=128 CGO_ENABLED=0 go run cmd/left/main.go

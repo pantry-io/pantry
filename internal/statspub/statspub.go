@@ -39,8 +39,9 @@ func StatsPublishInterval(interval time.Duration) Option {
 }
 
 type StatsPublisher struct {
-	qManager *queue.Manager
-	nc       *nats.Conn
+	qManager   *queue.Manager
+	nc         *nats.Conn
+	instanceId string
 
 	opts Options
 
@@ -48,7 +49,7 @@ type StatsPublisher struct {
 	done chan struct{}
 }
 
-func NewStatsPublisher(nc *nats.Conn, qManager *queue.Manager, options ...Option) (*StatsPublisher, error) {
+func NewStatsPublisher(nc *nats.Conn, qManager *queue.Manager, instanceId string, options ...Option) (*StatsPublisher, error) {
 	opts := GetDefaultOptions()
 	for _, opt := range options {
 		if opt != nil {
@@ -59,11 +60,12 @@ func NewStatsPublisher(nc *nats.Conn, qManager *queue.Manager, options ...Option
 	}
 
 	rq := &StatsPublisher{
-		nc:       nc,
-		qManager: qManager,
-		opts:     opts,
-		quit:     make(chan struct{}),
-		done:     make(chan struct{}),
+		qManager:   qManager,
+		nc:         nc,
+		instanceId: instanceId,
+		opts:       opts,
+		quit:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 	go rq.initBackgroundTasks()
 
@@ -101,7 +103,15 @@ func (sp *StatsPublisher) Close() {
 func (sp *StatsPublisher) publish() {
 	log.Debug().Msg("StatsPublisher: publish: triggered.")
 
-	// TODO: Collect the stats from the queue manager
+	// stats := make(map[string]interface{})
+
+	// // TODO: Collect the stats from the queue manager
+	// queues := sp.qManager.Queues()
+	// for _, q := range queues {
+	// 	sm := q.Stats.ToMap()
+	// 	// stats[]
+
+	// }
 
 	// TODO: Emit the stats on a topic
 }

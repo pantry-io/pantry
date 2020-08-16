@@ -586,7 +586,7 @@ func (c *Conn) processIngressMessageCallback(q *queue.Queue, msg *nats.Msg) func
 			Msgf("committed message")
 
 		// Increment the number of items in the queue
-		q.Stats.IncrementCount(1)
+		q.Stats.AddCount(1)
 
 		// Ack the message
 		if err := msg.Respond(nil); err != nil {
