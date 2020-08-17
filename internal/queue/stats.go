@@ -83,6 +83,9 @@ func NewQueueStats(db *badger.DB, queueName string, options ...QueueStatsOption)
 }
 
 func (qs *QueueStats) initBackgroundTasks() {
+	qs.mu.Lock()
+	defer qs.mu.Unlock()
+
 	qs.doneWg.Add(1)
 
 	// Stats refresh
@@ -103,6 +106,8 @@ func (qs *QueueStats) initBackgroundTasks() {
 
 // Close will stop the QueueStats background tasks.
 func (qs *QueueStats) Close() {
+	qs.mu.Lock()
+	defer qs.mu.Unlock()
 	close(qs.quit)
 	qs.doneWg.Wait()
 }
@@ -161,6 +166,9 @@ func (qs *QueueStats) refreshStats() error {
 }
 
 func (qs *QueueStats) QueueStatsMessage() protocol.QueueStatsMessage {
+	qs.mu.RLock()
+	defer qs.mu.RUnlock()
+
 	enqueued := qs.count
 	if enqueued < 0 {
 		enqueued = 0
