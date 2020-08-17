@@ -1,0 +1,4 @@
+{
+  "extends": ["airbnb", "airbnb/hooks"],
+  "semi": ["error", "never"]
+}
