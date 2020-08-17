@@ -15,6 +15,8 @@ type kv struct {
 	v []byte
 }
 
+// QueueBuilder is used to scan in the key, value pairs and incrementally build
+// up a new queue from them.
 type QueueBuilder struct {
 	kvs  []kv
 	name string

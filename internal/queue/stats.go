@@ -13,12 +13,34 @@ import (
 )
 
 const (
-	statsRefreshInterval = 60 * time.Second
+	DefaultStatsRefreshInterval = 60 * time.Second
 )
 
-type queueStats struct {
+type QueueStatsOptions struct {
+	refreshInterval time.Duration
+}
+
+func QueueStatsOptionsDefault() QueueStatsOptions {
+	return QueueStatsOptions{
+		refreshInterval: DefaultStatsRefreshInterval,
+	}
+}
+
+// QueueStatsOption is a function on the options for Reaper.
+type QueueStatsOption func(*QueueStatsOptions) error
+
+// ReapInterval sets the interval in which to check for zombied instances.
+func ReapInterval(refreshInterval time.Duration) QueueStatsOption {
+	return func(o *QueueStatsOptions) error {
+		o.refreshInterval = refreshInterval
+		return nil
+	}
+}
+
+type QueueStats struct {
 	quit   chan struct{}
 	doneWg sync.WaitGroup
+	opts   QueueStatsOptions
 
 	db *badger.DB
 
@@ -34,29 +56,39 @@ type queueStats struct {
 	inFlight int64
 }
 
-func newQueueStats(db *badger.DB, queueName string) (*queueStats, error) {
+func NewQueueStats(db *badger.DB, queueName string, options ...QueueStatsOption) (*QueueStats, error) {
 	if queueName == "" {
 		return nil, fmt.Errorf("queue name cannot be empty")
 	}
-	qs := &queueStats{
+
+	opts := QueueStatsOptionsDefault()
+	for _, opt := range options {
+		if opt != nil {
+			if err := opt(&opts); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	qs := &QueueStats{
 		quit:      make(chan struct{}),
+		opts:      opts,
 		db:        db,
 		queueName: queueName,
 	}
-	var wg sync.WaitGroup
-	wg.Add(1)
 
+	go func() { _ = qs.refreshStats() }() // Refresh stats now.
 	go qs.initBackgroundTasks()
 	return qs, nil
 }
 
-func (qs *queueStats) initBackgroundTasks() {
+func (qs *QueueStats) initBackgroundTasks() {
 	qs.doneWg.Add(1)
 
 	// Stats refresh
 	go func() {
 		defer qs.doneWg.Done()
-		t := ticker.New(statsRefreshInterval)
+		t := ticker.New(qs.opts.refreshInterval)
 		go func() {
 			<-qs.quit
 			t.Stop()
@@ -69,27 +101,26 @@ func (qs *queueStats) initBackgroundTasks() {
 
 }
 
-// Close will stop the queueStats background tasks.
-func (qs *queueStats) Close() {
+// Close will stop the QueueStats background tasks.
+func (qs *QueueStats) Close() {
 	close(qs.quit)
 	qs.doneWg.Wait()
 }
 
-func (qs *queueStats) SetName(name string) {
-	qs.mu.Lock()
-	qs.queueName = name
-	qs.mu.Unlock()
-}
-
-func (qs *queueStats) AddCount(num int64) {
+func (qs *QueueStats) AddCount(num int64) {
 	atomic.AddInt64(&qs.count, num)
 }
 
-func (qs *queueStats) AddInFlight(num int64) {
+func (qs *QueueStats) AddInFlight(num int64) {
 	atomic.AddInt64(&qs.inFlight, num)
 }
 
-func (qs *queueStats) refreshStats() error {
+func (qs *QueueStats) refreshStats() error {
+	// Lock so that we don't ever end up running two refreshes at once for this
+	// queue.
+	qs.mu.Lock()
+	defer qs.mu.Unlock()
+
 	name := qs.queueName
 	seek := FirstMessage(name)
 	until := LastMessage(name)
@@ -129,7 +160,7 @@ func (qs *queueStats) refreshStats() error {
 	return err
 }
 
-func (qs *queueStats) ToMap() map[string]interface{} {
+func (qs *QueueStats) ToMap() map[string]interface{} {
 	m := make(map[string]interface{})
 	m["count"] = atomic.LoadInt64(&qs.count)
 	m["inFlight"] = atomic.LoadInt64(&qs.inFlight)
@@ -143,7 +174,7 @@ func (qs *queueStats) ToMap() map[string]interface{} {
 	return m
 }
 
-func (qs *queueStats) QueueStatsMessage() protocol.QueueStatsMessage {
+func (qs *QueueStats) QueueStatsMessage() protocol.QueueStatsMessage {
 	enqueued := qs.count
 	if enqueued < 0 {
 		enqueued = 0

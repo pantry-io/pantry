@@ -36,7 +36,7 @@ type Queue struct {
 	mu         sync.RWMutex
 	name       string
 	checkpoint Checkpoint
-	Stats      *queueStats
+	Stats      *QueueStats
 }
 
 func NewQueue(db *badger.DB, name string) (*Queue, error) {
@@ -44,7 +44,7 @@ func NewQueue(db *badger.DB, name string) (*Queue, error) {
 		return nil, fmt.Errorf("new queue: queue name cannot be empty")
 	}
 
-	qStats, err := newQueueStats(db, name)
+	qStats, err := NewQueueStats(db, name)
 	if err != nil {
 		return nil, fmt.Errorf("new queue: %w", err)
 	}
@@ -180,23 +180,6 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 	}
 	return nil
 }
-
-// TODO: Remove this
-// func (q *Queue) SetName(name string) {
-// 	if name == "" {
-// 		return
-// 	}
-
-// 	q.mu.Lock()
-// 	q.name = name
-
-// 	// Chaning the name requires us to update stats
-// 	if q.Stats != nil {
-// 		q.Stats.SetName(name)
-// 	}
-
-// 	q.mu.Unlock()
-// }
 
 // Range performs a range query against the storage. It calls f sequentially for
 // each key and value present in the store. If f returns false, range stops the

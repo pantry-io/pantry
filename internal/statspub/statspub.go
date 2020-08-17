@@ -23,7 +23,7 @@ type Options struct {
 	pubInterval time.Duration
 }
 
-func GetDefaultOptions() Options {
+func OptionsDefault() Options {
 	return Options{
 		pubInterval: DefaultStatsPublisherInterval,
 	}
@@ -52,7 +52,7 @@ type StatsPublisher struct {
 }
 
 func NewStatsPublisher(nc *nats.Conn, qManager *queue.Manager, instanceId string, options ...Option) (*StatsPublisher, error) {
-	opts := GetDefaultOptions()
+	opts := OptionsDefault()
 	for _, opt := range options {
 		if opt != nil {
 			if err := opt(&opts); err != nil {
@@ -76,7 +76,7 @@ func NewStatsPublisher(nc *nats.Conn, qManager *queue.Manager, instanceId string
 
 func (sp *StatsPublisher) initBackgroundTasks() {
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		wg.Wait()
 		close(sp.done)

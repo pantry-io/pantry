@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -35,63 +34,6 @@ func setup(t *testing.T) string {
 	return dir
 }
 
-// func TestPublish(t *testing.T) {
-// 	// Create a tmp badger database
-// 	dir := setup(t)
-// 	openOpts := badger.DefaultOptions(dir)
-// 	db, err := badger.Open(openOpts)
-// 	assert.NoError(t, err)
-// 	defer db.Close()
-
-// 	qManager, err := queue.NewManager(db)
-// 	assert.NoError(t, err)
-
-// 	// Create a queue
-// 	queueName := "high-priority"
-// 	msgQueue, err := qManager.CreateQueue(queue.QueueKey{Name: queueName})
-// 	assert.NoError(t, err)
-// 	defer msgQueue.Close()
-
-// 	commitCb := func(err error) {
-// 		assert.NoError(t, err)
-// 	}
-
-// 	// Add some messages to our queue
-// 	kq := queue.NewQueueKeyForMessage(queueName, key.New(time.Now()))
-// 	assert.NoError(t, msgQueue.AddMessage(kq.Bytes(), []byte("foo"), 24*time.Hour, commitCb))
-
-// 	s := natsserver.RunDefaultServer()
-// 	defer s.Shutdown()
-// 	ncSub, err := nats.Connect(s.ClientURL())
-// 	assert.NoError(t, err)
-// 	defer ncSub.Close()
-
-// 	// Subscribe and wait for a message with stats.
-// 	sub, err := ncSub.SubscribeSync(StatsSubject)
-// 	assert.NoError(t, err)
-// 	// assert.NoError(t, sub.AutoUnsubscribe(1))
-
-// 	instanceId := "Instance1234"
-
-// 	ncPub, err := nats.Connect(s.ClientURL())
-// 	assert.NoError(t, err)
-// 	defer ncPub.Close()
-// 	spub, err := NewStatsPublisher(ncPub, qManager, instanceId, StatsPublishInterval(time.Hour))
-// 	assert.NoError(t, err)
-// 	defer spub.Close()
-
-// 	// Call publish explicitly.
-// 	assert.NoError(t, spub.publish())
-
-// 	// Get the published stats message.
-// 	msg, err := sub.NextMsg(time.Hour)
-// 	assert.NoError(t, err)
-// 	ism := protocol.InstanceStatsMessageFromNATS(msg)
-
-// 	// Assert everything is correct.
-// 	assert.Equal(t, instanceId, ism.InstanceId)
-// }
-
 func TestPublish(t *testing.T) {
 	// Create a tmp badger database
 	dir := setup(t)
@@ -109,12 +51,10 @@ func TestPublish(t *testing.T) {
 	assert.NoError(t, err)
 	defer msgQueue.Close()
 
+	// Add some messages to our queue
 	commitCb := func(err error) {
 		assert.NoError(t, err)
-		t.Log("committed message")
 	}
-
-	// Add some messages to our queue
 	kq := queue.NewQueueKeyForMessage(queueName, key.New(time.Now()))
 	assert.NoError(t, msgQueue.AddMessage(kq.Bytes(), []byte("foo"), 24*time.Hour, commitCb))
 
@@ -125,17 +65,13 @@ func TestPublish(t *testing.T) {
 	defer ncSub.Close()
 
 	instanceId := "Instance1234"
-	var wg sync.WaitGroup
-	wg.Add(1)
+	wait := make(chan struct{})
 
 	// Subscribe and wait for a message with stats.
 	_, err = ncSub.Subscribe(StatsSubject, func(msg *nats.Msg) {
 		ism := protocol.InstanceStatsMessageFromNATS(msg)
-
-		// Assert everything is correct.
-		assert.Equal(t, instanceId, ism.InstanceId)
-
-		wg.Done()
+		validateInstanceStats(t, instanceId, queueName, ism)
+		wait <- struct{}{}
 	})
 	assert.NoError(t, err)
 	// assert.NoError(t, sub.AutoUnsubscribe(1))
@@ -144,17 +80,22 @@ func TestPublish(t *testing.T) {
 	assert.NoError(t, err)
 	defer ncPub.Close()
 
-	// TODO: Creating a queue will create a stats publisher. No need for us to create this one manually...
-	// spub, err := NewStatsPublisher(ncPub, qManager, instanceId, StatsPublishInterval(time.Hour))
-	// assert.NoError(t, err)
-	// defer spub.Close()
+	spub, err := NewStatsPublisher(ncPub, qManager, instanceId, StatsPublishInterval(500*time.Millisecond))
+	assert.NoError(t, err)
+	defer spub.Close()
 
-	// Call publish explicitly.
-	// assert.NoError(t, )
+	<-wait
+	// Done.
+}
 
-	// Get the published stats message.
-	// msg, err := sub.NextMsg(time.Hour)
-	// assert.NoError(t, err)
-
-	wg.Wait()
+func validateInstanceStats(t *testing.T, instanceId string, queueName string, ism protocol.InstanceStatsMessage) {
+	// Assert everything is correct.
+	assert.Equal(t, instanceId, ism.InstanceId)
+	queues := ism.Queues
+	for _, q := range queues {
+		assert.Equal(t, queueName, q.QueueName)
+		assert.Equal(t, int64(1), q.Enqueued)
+		assert.Equal(t, int64(0), q.InFlight) // Republisher isn't running.
+	}
+	assert.Len(t, ism.Queues, 1)
 }
