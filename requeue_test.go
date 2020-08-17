@@ -160,9 +160,6 @@ func Test_RequeueEndToEnd(t *testing.T) {
 
 						msg, err := requeue.RetryRequest(nc, subject, payload.Bytes(), 15*time.Second, 100000)
 						if err != nil {
-							if err == requeue.RequeueRequestRetriesExceededError {
-								return err
-							}
 							if nc.LastError() != nil {
 								return fmt.Errorf("last error for request: %w", nc.LastError())
 							}
