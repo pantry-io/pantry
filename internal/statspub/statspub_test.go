@@ -66,7 +66,6 @@ func TestPublish(t *testing.T) {
 	t.Cleanup(func() {
 		s.Shutdown()
 	})
-	// defer s.Shutdown()
 	ncSub, err := nats.Connect(s.ClientURL())
 	assert.NoError(t, err)
 	t.Cleanup(func() {
@@ -83,7 +82,6 @@ func TestPublish(t *testing.T) {
 		wait <- struct{}{}
 	})
 	assert.NoError(t, err)
-	// assert.NoError(t, sub.AutoUnsubscribe(1))
 
 	ncPub, err := nats.Connect(s.ClientURL())
 	assert.NoError(t, err)

@@ -38,19 +38,9 @@ func NewBatchedWriter(db *badger.DB, d time.Duration) *BatchedWriter {
 // On duration, call flush so we don't end up with writes waiting too long to be
 // committed.
 func (bw *BatchedWriter) loop(d time.Duration) {
-	// ticker := time.NewTicker(d)
-	// for {
-	// 	select {
-	// case <-ticker.C:
-	// 	bw.flush(false)
-	// case <-bw.quit:
 	<-bw.quit
-	// ticker.Stop()
 	bw.flush(true)
 	close(bw.done)
-	// return
-	// }
-	// }
 }
 
 func (bw *BatchedWriter) flush(last bool) {
@@ -137,7 +127,3 @@ func (bw *BatchedWriter) WriteKVList(kvList *pb.KVList, cb WriteBatchCommitCB) e
 
 	return err
 }
-
-// Calls to Flush always reset the transaction. If there was an error then the
-// transaction wasn't committed but a previous one may have been.
-// Calls to Set may try to commit the transaction.

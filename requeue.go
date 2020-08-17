@@ -412,14 +412,10 @@ func (c *Conn) initNATS() error {
 	}()
 
 	sub, err := rc.nc.QueueSubscribe(o.natsSubject, o.natsQueueName, func(msg *nats.Msg) {
-		// fb := flatbuf.GetRootAsRequeueMessage(msg.Data, 0)
-		// log.Debug().Str("msg", string(fb.OriginalPayloadBytes())).Msg("got message")
 		c.natsMsgCh <- msg
-		// log.Debug().Str("msg", string(fb.OriginalPayloadBytes())).Msg("processed message")
 	})
 
 	// Subscribe to the subject using the queue group.
-	// sub, err := rc.nc.QueueSubscribeSyncWithChan(o.NatsSubject, o.NatsQueueName, c.natsMsgCh)
 	if err != nil {
 		log.Err(err).Dict("nats",
 			zerolog.Dict().
@@ -428,10 +424,7 @@ func (c *Conn) initNATS() error {
 			Msg("nats-replay: unable to subscribe to queue")
 		return err
 	}
-	// if err := sub.SetPendingLimits(10000, -1); err != nil {
-	// 	log.Err(err).Msg("nats-replay: SetPendingLimits")
-	// 	// Don't die, we'll just continue with the default limits.
-	// }
+	// We may want to set PendingLimits here.
 
 	rc.sub = sub
 	rc.nc.Flush()
@@ -571,14 +564,8 @@ func (c *Conn) processIngressMessageCallback(q *queue.Queue, msg *nats.Msg) func
 				Str("msg", string(fb.OriginalPayloadBytes())).
 				Msgf("problem committing message")
 		}
-		// ml, bl, err := c.sub.PendingLimits()
-		// if err != nil {
-		// 	log.Err(err).Msg("PendingLimits")
-		// }
 		log.Debug().
 			Str("msg", string(fb.OriginalPayloadBytes())).
-			// Int("pending-limits-msg", ml).
-			// Int("pending-limits-size", bl).
 			Str("Reply", msg.Reply).
 			Str("Subject", msg.Subject).
 			Msgf("committed message")

@@ -160,20 +160,6 @@ func (qs *QueueStats) refreshStats() error {
 	return err
 }
 
-func (qs *QueueStats) ToMap() map[string]interface{} {
-	m := make(map[string]interface{})
-	m["count"] = atomic.LoadInt64(&qs.count)
-	m["inFlight"] = atomic.LoadInt64(&qs.inFlight)
-
-	// We can end up with a negative count due to this being eventually
-	// consistent.
-	if m["count"].(int64) < 0 {
-		m["count"] = 0
-	}
-
-	return m
-}
-
 func (qs *QueueStats) QueueStatsMessage() protocol.QueueStatsMessage {
 	enqueued := qs.count
 	if enqueued < 0 {

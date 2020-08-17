@@ -1,15 +1,10 @@
 package requeue
 
 import (
-	"errors"
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/nats-io/nats.go"
-)
-
-var (
-	RequeueRequestRetriesExceededError = errors.New("requeue: retries exceeded")
 )
 
 func RetryRequest(nc *nats.Conn, subject string, payload []byte, timeout time.Duration, times int) (*nats.Msg, error) {
@@ -25,22 +20,5 @@ func RetryRequest(nc *nats.Conn, subject string, payload []byte, timeout time.Du
 		msg = m
 		return nil
 	}
-
-	err := backoff.Retry(operation, backoff.NewExponentialBackOff())
-	// if err != nil {
-	// 	// Handle error.
-	// 	return
-	// }
-
-	// backoff := 1 * time.Second
-	// for i := 0; i < times; i++ {
-	// 	// Are there any critical errors we should return early from?
-	// 	if err == nil {
-	// 		return msg, nil
-	// 	}
-	// 	time.Sleep(backoff)
-	// 	backoff = backoff * 2
-	// }
-	// return nil, RequeueRequestRetriesExceededError
-	return msg, err
+	return msg, backoff.Retry(operation, backoff.NewExponentialBackOff())
 }

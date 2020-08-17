@@ -164,19 +164,15 @@ func Test_RequeueEndToEnd(t *testing.T) {
 								return err
 							}
 							if nc.LastError() != nil {
-								// log.Fatal().Msgf("%v for request", nc.LastError())
 								return fmt.Errorf("last error for request: %w", nc.LastError())
 							}
-							// log.Fatal().Msgf("%v for request", err)
 							return fmt.Errorf("for request: %w", err)
 						}
 						if len(msg.Data) > 0 {
 							// For performace, we should be able to send ACK with an empty
 							// payload.
-							// t.Errorf("Expected the ACK to be empty but got %s", string(msg.Data))
 							return fmt.Errorf("Expected the ACK to be empty but got %s", string(msg.Data))
 						}
-						// log.Debug().Msgf("got ack for: %d", i)
 						return nil
 					}(i)
 					if err != nil {
@@ -192,7 +188,6 @@ func Test_RequeueEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// log.Info().Int64("pending", pending).Msg("left terminated")
 	t.Logf("pending: %d", pending)
 
 	// Wait for all the messages to have been republished
