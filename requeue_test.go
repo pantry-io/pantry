@@ -16,7 +16,6 @@ import (
 	requeue "github.com/nickpoorman/nats-requeue"
 	"github.com/nickpoorman/nats-requeue/internal/republisher"
 	"github.com/nickpoorman/nats-requeue/protocol"
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 )
@@ -40,13 +39,9 @@ func setup(t *testing.T) string {
 }
 
 func Test_RequeueEndToEnd(t *testing.T) {
-	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	done := true
 
-	s := natsserver.RunDefaultServer()
-	// defaultOpts := natsserver.DefaultTestOptions
-	// defaultOpts.NoSigs = false
-	// s := natsserver.RunServer(&defaultOpts)
+	s := natsserver.RunRandClientPortServer()
 	t.Cleanup(func() {
 		s.Shutdown()
 	})
@@ -83,6 +78,9 @@ func Test_RequeueEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error on requeue connect: %v", err)
 	}
+	t.Cleanup(func() {
+		rc.Close()
+	})
 
 	nc, err := nats.Connect(
 		clientURL,
@@ -104,6 +102,9 @@ func Test_RequeueEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
 	}
+	t.Cleanup(func() {
+		nc.Close()
+	})
 
 	var eventsMu sync.Mutex
 	events := make(map[string]struct{})

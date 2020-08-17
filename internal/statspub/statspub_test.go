@@ -40,7 +40,9 @@ func TestPublish(t *testing.T) {
 	openOpts := badger.DefaultOptions(dir)
 	db, err := badger.Open(openOpts)
 	assert.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() {
+		db.Close()
+	})
 
 	qManager, err := queue.NewManager(db)
 	assert.NoError(t, err)
@@ -49,7 +51,9 @@ func TestPublish(t *testing.T) {
 	queueName := "high-priority"
 	msgQueue, err := qManager.CreateQueue(queue.QueueKey{Name: queueName})
 	assert.NoError(t, err)
-	defer msgQueue.Close()
+	t.Cleanup(func() {
+		msgQueue.Close()
+	})
 
 	// Add some messages to our queue
 	commitCb := func(err error) {
@@ -58,11 +62,16 @@ func TestPublish(t *testing.T) {
 	kq := queue.NewQueueKeyForMessage(queueName, key.New(time.Now()))
 	assert.NoError(t, msgQueue.AddMessage(kq.Bytes(), []byte("foo"), 24*time.Hour, commitCb))
 
-	s := natsserver.RunDefaultServer()
-	defer s.Shutdown()
+	s := natsserver.RunRandClientPortServer()
+	t.Cleanup(func() {
+		s.Shutdown()
+	})
+	// defer s.Shutdown()
 	ncSub, err := nats.Connect(s.ClientURL())
 	assert.NoError(t, err)
-	defer ncSub.Close()
+	t.Cleanup(func() {
+		ncSub.Close()
+	})
 
 	instanceId := "Instance1234"
 	wait := make(chan struct{})
@@ -78,11 +87,15 @@ func TestPublish(t *testing.T) {
 
 	ncPub, err := nats.Connect(s.ClientURL())
 	assert.NoError(t, err)
-	defer ncPub.Close()
+	t.Cleanup(func() {
+		ncPub.Close()
+	})
 
 	spub, err := NewStatsPublisher(ncPub, qManager, instanceId, StatsPublishInterval(500*time.Millisecond))
 	assert.NoError(t, err)
-	defer spub.Close()
+	t.Cleanup(func() {
+		spub.Close()
+	})
 
 	<-wait
 	// Done.
