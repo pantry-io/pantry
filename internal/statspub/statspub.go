@@ -107,6 +107,8 @@ func (sp *StatsPublisher) publish() error {
 
 	queues := sp.qManager.Queues()
 
+	log.Debug().Interface("queues", queues).Msg("StatsPublisher: publish: got queues.")
+
 	ism := &protocol.InstanceStatsMessage{
 		InstanceId: sp.instanceId,
 		Queues:     make([]protocol.QueueStatsMessage, len(queues)),
@@ -117,11 +119,14 @@ func (sp *StatsPublisher) publish() error {
 		ism.Queues[i] = q.Stats.QueueStatsMessage()
 	}
 
+	log.Debug().Msg("StatsPublisher: publish: collected stats")
+
 	// Emit the stats on a topic
 	err := sp.nc.Publish(StatsSubject, ism.Bytes())
 	if err != nil {
 		log.Err(err).Msg("problem publishing stats")
 	}
+	log.Debug().Msg("StatsPublisher: publish: emitted stats")
 
 	return nil
 }

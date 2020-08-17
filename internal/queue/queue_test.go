@@ -40,7 +40,8 @@ func TestNewQueue(t *testing.T) {
 	defer db.Close()
 
 	queueName := "testqueue"
-	q := NewQueue(db, queueName)
+	q, err := NewQueue(db, queueName)
+	assert.NoError(t, err)
 	assert.Equal(t, queueName, q.name, "Queue names should be equal")
 }
 

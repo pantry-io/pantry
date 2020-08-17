@@ -24,10 +24,7 @@ import (
 
 const (
 	sep                = "."
-	sepBytes           = 1
 	QueuesNamespace    = "_q"
-	namespaceKeyBytes  = 2
-	bucketKeyBytes     = 2
 	MessagesBucket     = "_m"
 	StateBucket        = "_s"
 	CheckpointProperty = "checkpoint"
@@ -70,6 +67,13 @@ func ParseQueueKey(k []byte) QueueKey {
 		Name:      string(spl[2]),
 		Key:       spl[3],
 	}
+}
+
+func assertMessageQueueKeyIsValid(key []byte, queueName string) bool {
+	debug.Assert(ParseQueueKey(key).Namespace == QueuesNamespace, "Namespace is incorrect")
+	debug.Assert(ParseQueueKey(key).Bucket == MessagesBucket, "MessagesBucket is incorrect")
+	debug.Assert(ParseQueueKey(key).Name == queueName, "Queue name is incorrect")
+	return true
 }
 
 func (q QueueKey) IsKey() bool {

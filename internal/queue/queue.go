@@ -8,6 +8,7 @@ import (
 
 	badger "github.com/dgraph-io/badger/v2"
 	badgerInternal "github.com/nickpoorman/nats-requeue/internal/badger"
+	"github.com/nickpoorman/nats-requeue/internal/debug"
 	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/rs/zerolog/log"
 )
@@ -38,7 +39,16 @@ type Queue struct {
 	Stats      *queueStats
 }
 
-func NewQueue(db *badger.DB, name string) *Queue {
+func NewQueue(db *badger.DB, name string) (*Queue, error) {
+	if name == "" {
+		return nil, fmt.Errorf("new queue: queue name cannot be empty")
+	}
+
+	qStats, err := newQueueStats(db, name)
+	if err != nil {
+		return nil, fmt.Errorf("new queue: %w", err)
+	}
+
 	q := &Queue{
 		quit:        make(chan struct{}),
 		done:        make(chan struct{}),
@@ -46,9 +56,7 @@ func NewQueue(db *badger.DB, name string) *Queue {
 		batchWriter: badgerInternal.NewBatchedWriter(db, 15*time.Millisecond),
 		name:        name,
 		checkpoint:  FirstMessage(name).Bytes(), // set to the min possible value
-	}
-	if name != "" {
-		q.Stats = newQueueStats(db, name)
+		Stats:       qStats,
 	}
 
 	go func() {
@@ -63,17 +71,20 @@ func NewQueue(db *badger.DB, name string) *Queue {
 		q.mu.Unlock()
 		close(q.done)
 	}()
-	return q
+	return q, nil
 }
 
 // TODO: Combine this with NewQueue
 func createQueue(db *badger.DB, name string) (*Queue, error) {
 	// Create the queue and persist it.
-	q := NewQueue(db, name)
+	q, err := NewQueue(db, name)
+	if err != nil {
+		return nil, fmt.Errorf("create queue: %w", err)
+	}
 	q.checkpoint = FirstMessage(name).Bytes() // set to the min possible value
 
 	// Save the queue state to disk
-	err := q.db.Update(func(txn *badger.Txn) error {
+	if err := q.db.Update(func(txn *badger.Txn) error {
 		// Save the checkpoint for the queue
 		if err := txn.Set(
 			NewQueueKeyForState(q.name, CheckpointProperty).Bytes(),
@@ -83,13 +94,11 @@ func createQueue(db *badger.DB, name string) (*Queue, error) {
 		}
 
 		return nil
-	})
-
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
-	return q, err
+	return q, nil
 }
 
 // Close will stop the queue background tasks.
@@ -172,17 +181,22 @@ func (q *Queue) SetKV(qk QueueKey, v []byte) error {
 	return nil
 }
 
-func (q *Queue) SetName(name string) {
-	q.mu.Lock()
-	q.name = name
+// TODO: Remove this
+// func (q *Queue) SetName(name string) {
+// 	if name == "" {
+// 		return
+// 	}
 
-	// Chaning the name requires us to update stats
-	if q.Stats != nil {
-		q.Stats.SetName(name)
-	}
+// 	q.mu.Lock()
+// 	q.name = name
 
-	q.mu.Unlock()
-}
+// 	// Chaning the name requires us to update stats
+// 	if q.Stats != nil {
+// 		q.Stats.SetName(name)
+// 	}
+
+// 	q.mu.Unlock()
+// }
 
 // Range performs a range query against the storage. It calls f sequentially for
 // each key and value present in the store. If f returns false, range stops the
@@ -298,6 +312,9 @@ func (q *Queue) EarliestCheckpoint(until time.Time) (Checkpoint, error) {
 // AddMessage will add a message to the queue and execute the callback function cb once committed.
 // Any TTL less than or equal to zero will be ignored.
 func (q *Queue) AddMessage(key []byte, value []byte, ttl time.Duration, cb func(error)) error {
+	// Validate the key
+	debug.Assert(assertMessageQueueKeyIsValid(key, q.name), "message queue key is invalid")
+
 	entry := badger.NewEntry(key, value)
 	if ttl > 0 {
 		entry = entry.WithTTL(ttl)

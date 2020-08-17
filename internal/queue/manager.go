@@ -108,12 +108,8 @@ func (m *Manager) loadFromDisk() error {
 			Bucket:    StateBucket,
 		}.BucketPrefix())
 
-		q := NewQueue(m.db, "")
-
-		addQ := func() {
-			m.addQueue(q)
-			q = NewQueue(m.db, "")
-		}
+		// Keys are iterated over in order so we can build one queue at a time.
+		builder := NewQueueBuilder()
 
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
@@ -125,19 +121,28 @@ func (m *Manager) loadFromDisk() error {
 			if err != nil {
 				return err
 			}
-			qk := ParseQueueKey(key)
-			if q.name != "" && qk.Name != q.name {
-				// Started a new queue
-				addQ()
-			}
-			q.SetName(qk.Name)
-			if err := q.SetKV(qk, value); err != nil {
+			if err := builder.Set(key, value); err != nil {
+				if err == DifferentQueueNameError {
+					// We've reached a new queue.
+					q, err := builder.Build(m.db)
+					if err != nil {
+						return err
+					}
+					// Add the queue to our manager.
+					m.addQueue(q)
+					continue // Move on to next
+				}
 				return err
 			}
 		}
 		// Add the queue from the final iteration if there is one.
-		if q.name != "" {
-			addQ()
+		if !builder.IsZero() {
+			q, err := builder.Build(m.db)
+			if err != nil {
+				return err
+			}
+			// Add the queue to our manager.
+			m.addQueue(q)
 		}
 		return nil
 	})

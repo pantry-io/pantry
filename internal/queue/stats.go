@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,7 +34,10 @@ type queueStats struct {
 	inFlight int64
 }
 
-func newQueueStats(db *badger.DB, queueName string) *queueStats {
+func newQueueStats(db *badger.DB, queueName string) (*queueStats, error) {
+	if queueName == "" {
+		return nil, fmt.Errorf("queue name cannot be empty")
+	}
 	qs := &queueStats{
 		quit:      make(chan struct{}),
 		db:        db,
@@ -43,7 +47,7 @@ func newQueueStats(db *badger.DB, queueName string) *queueStats {
 	wg.Add(1)
 
 	go qs.initBackgroundTasks()
-	return qs
+	return qs, nil
 }
 
 func (qs *queueStats) initBackgroundTasks() {
