@@ -2,33 +2,67 @@
   "name": "learn-starter",
   "version": "0.1.0",
   "private": true,
+  "description": "A webui console for Pantry.",
+  "author": "Nick Poorman <nickpoorman@gmail.com>",
+  "homepage": "https://github.com/pantry-io/pantry",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pantry-io/pantry.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
   },
+  "lint-staged": {
+    "**/*.js": [
+      "prettier --write"
+    ],
+    "**/*.css": [
+      "stylelint --fix",
+      "prettier --write"
+    ]
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
+  },
   "dependencies": {
+    "@nivo/line": "^0.62.0",
     "classnames": "^2.2.6",
     "date-fns": "^2.15.0",
     "evergreen-ui": "^5.0.4",
     "gray-matter": "^4.0.2",
     "next": "9.3.5",
-    "postcss-flexbugs-fixes": "^4.2.1",
-    "postcss-preset-env": "^6.7.0",
     "react": "16.13.1",
     "react-dom": "16.13.1",
     "remark": "^12.0.1",
     "remark-html": "^12.0.0",
-    "sass": "^1.26.10",
-    "tailwindcss": "^1.6.2"
+    "sass": "^1.26.10"
   },
   "devDependencies": {
+    "@fullhuman/postcss-purgecss": "^2.3.0",
+    "@svgr/webpack": "^5.4.0",
+    "autoprefixer": "^9.8.6",
+    "dotenv": "^8.2.0",
     "eslint": "^7.2.0",
     "eslint-config-airbnb": "^18.2.0",
     "eslint-plugin-import": "^2.22.0",
     "eslint-plugin-jsx-a11y": "^6.3.1",
     "eslint-plugin-react": "^7.20.6",
     "eslint-plugin-react-hooks": "^4.0.0",
-    "prettier": "2.0.5"
+    "husky": "^4.2.5",
+    "lint-staged": "^10.2.11",
+    "postcss-flexbugs-fixes": "^4.2.1",
+    "postcss-import": "^12.0.1",
+    "postcss-preset-env": "^6.7.0",
+    "prettier": "2.0.5",
+    "prettier-eslint": "^11.0.0",
+    "stylelint": "^13.6.1",
+    "stylelint-config-css-modules": "^2.2.0",
+    "stylelint-config-prettier": "^8.0.2",
+    "stylelint-config-recommended": "^3.0.0",
+    "tailwindcss": "^1.7.0"
   }
 }
