@@ -39,27 +39,27 @@ export default function Home({ allPostsData }) {
       >
         <Pane display="flex" flexDirection="column" alignItems="center">
           <Text size={600}>1,345,678</Text>
-          <Text size={200}>Processed</Text>
+          <Text size={300}>Processed</Text>
         </Pane>
         <Pane display="flex" flexDirection="column" alignItems="center">
           <Text size={600}>10</Text>
-          <Text size={200}>Instances</Text>
+          <Text size={300}>Instances</Text>
         </Pane>
         <Pane display="flex" flexDirection="column" alignItems="center">
           <Text size={600}>297,345,678</Text>
-          <Text size={200}>Enqueued</Text>
+          <Text size={300}>Enqueued</Text>
         </Pane>
         <Pane display="flex" flexDirection="column" alignItems="center">
           <Text size={600}>1,789</Text>
-          <Text size={200}>In Flight</Text>
+          <Text size={300}>In Flight</Text>
         </Pane>
         <Pane display="flex" flexDirection="column" alignItems="center">
           <Text size={600}>8 ms</Text>
-          <Text size={200}>Ack Latency p95</Text>
+          <Text size={300}>Ack Latency p95</Text>
         </Pane>
         <Pane display="flex" flexDirection="column" alignItems="center">
-          <Text size={600}>22 ms</Text>
-          <Text size={200}>Ack Latency p99</Text>
+          <Text size={600}>22 msf</Text>
+          <Text size={300}>Ack Latency p99</Text>
         </Pane>
       </Pane>
       <Pane height={500}>
