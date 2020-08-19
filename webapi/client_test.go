@@ -110,3 +110,5 @@ func TestWebsocket(t *testing.T) {
 	assert.Equal(t, instanceId, m.Instance.InstanceId)
 	assert.Equal(t, int64(10), m.Instance.Queues[0].Enqueued)
 }
+
+// TODO: Add tests for disconnecting from both the client and server sides.
