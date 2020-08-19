@@ -9,6 +9,7 @@
     "airbnb/hooks",
     "eslint:recommended",
     "plugin:react/recommended",
+    "plugin:react-hooks/recommended",
     "prettier",
     "prettier/react"
   ],

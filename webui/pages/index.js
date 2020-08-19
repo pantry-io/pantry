@@ -1,7 +1,7 @@
+import React, { useState, useCallback, useMemo, useRef } from 'react'
 import Head from 'next/head'
 import Layout, { siteTitle } from '../components/layout'
 import utilStyles from '../styles/utils.module.css'
-import { getSortedPostsData } from '../lib/posts'
 import Link from 'next/link'
 import Date from '../components/date'
 import ResponsiveLine from '../components/charts/line'
@@ -13,17 +13,25 @@ import {
   Text,
   Link as EvergreenLink,
 } from 'evergreen-ui'
+import { WebSocketDemo } from '../components/WebSocketDemo'
 
-export async function getStaticProps() {
-  const allPostsData = getSortedPostsData()
-  return {
-    props: {
-      allPostsData,
-    },
-  }
-}
+export default function Home() {
+  // const [data, setData] = useState({})
+  // const { pageviews, uniques, bounces, totaltime } = data
 
-export default function Home({ allPostsData }) {
+  // async function loadData() {
+  //   setData(
+  //     await get(`/api/website/${websiteId}/metrics`, {
+  //       start_at: +startDate,
+  //       end_at: +endDate,
+  //     })
+  //   )
+  // }
+
+  // useEffect(() => {
+  //   loadData()
+  // }, [websiteId, startDate, endDate])
+
   return (
     <Layout home>
       <Head>
@@ -58,13 +66,14 @@ export default function Home({ allPostsData }) {
           <Text size={300}>Ack Latency p95</Text>
         </Pane>
         <Pane display="flex" flexDirection="column" alignItems="center">
-          <Text size={600}>22 msf</Text>
+          <Text size={600}>22 ms</Text>
           <Text size={300}>Ack Latency p99</Text>
         </Pane>
       </Pane>
       <Pane height={500}>
-        <ResponsiveLine data={ResponsiveLineData} />
+        {/* <ResponsiveLine data={ResponsiveLineData} /> */}
       </Pane>
+      <WebSocketDemo></WebSocketDemo>
 
       {/* <section className={utilStyles.headingMd}>
         <p>[Your Self Introduction]</p>

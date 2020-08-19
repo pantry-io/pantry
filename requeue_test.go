@@ -212,3 +212,64 @@ func buildPayload(i int, originalSubject string) protocol.RequeueMessage {
 	msg.OriginalPayload = []byte(fmt.Sprintf("my awesome payload %d", i))
 	return msg
 }
+
+// Test to see if we can have multiple subscriptions from a single client.
+func TestMultipleSubscriptions(t *testing.T) {
+	s := natsserver.RunRandClientPortServer()
+	t.Cleanup(func() {
+		s.Shutdown()
+	})
+
+	nc, err := nats.Connect(s.ClientURL())
+	assert.NoError(t, err)
+	t.Cleanup(func() {
+		nc.Close()
+	})
+
+	topic := "TestMultipleSubscriptionsTopic"
+
+	waitA := make(chan string)
+	waitB := make(chan string)
+
+	// Create first subscription.
+	subA, err := nc.Subscribe(topic, func(msg *nats.Msg) {
+		waitA <- string(msg.Data)
+	})
+	assert.NoError(t, err)
+
+	subB, err := nc.Subscribe(topic, func(msg *nats.Msg) {
+		waitB <- string(msg.Data)
+	})
+	assert.NoError(t, err)
+
+	// Subscriptions should not be the same.
+	assert.NotEqual(t, subA, subB)
+
+	// Create connection and send a message.
+	ncPub, err := nats.Connect(s.ClientURL())
+	assert.NoError(t, err)
+	t.Cleanup(func() {
+		ncPub.Close()
+	})
+	assert.NoError(t, ncPub.Publish(topic, []byte("msg1")))
+
+	// Wait for both subscribers to get the message.
+	assert.Equal(t, "msg1", <-waitA)
+	assert.Equal(t, "msg1", <-waitB)
+
+	// Unsubscribe A
+	assert.NoError(t, subA.Unsubscribe())
+
+	// Send another message
+	assert.NoError(t, ncPub.Publish(topic, []byte("msg2")))
+
+	// Wait for the second message.
+	assert.Equal(t, "msg2", <-waitB)
+
+	select {
+	case <-waitA:
+		t.Fatal("no message should be on A")
+	default:
+		// All good.
+	}
+}

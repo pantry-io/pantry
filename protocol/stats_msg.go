@@ -9,8 +9,8 @@ import (
 )
 
 type InstanceStatsMessage struct {
-	InstanceId string
-	Queues     []QueueStatsMessage
+	InstanceId string              `json:"instance_id"`
+	Queues     []QueueStatsMessage `json:"queues"`
 }
 
 func DefaultInstanceStatsMessage() InstanceStatsMessage {
@@ -76,9 +76,9 @@ func (i *InstanceStatsMessage) fromFlatbuf(m *flatbuf.InstanceStatsMessage) {
 }
 
 type QueueStatsMessage struct {
-	QueueName string
-	Enqueued  int64
-	InFlight  int64
+	QueueName string `json:"queue_name"`
+	Enqueued  int64  `json:"enqueued"`
+	InFlight  int64  `json:"in_flight"`
 }
 
 func (q *QueueStatsMessage) Bytes() []byte {
