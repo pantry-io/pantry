@@ -1,7 +1,9 @@
-package webapi
+package server
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -36,10 +38,19 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+var (
+	// Client errors
+	ClientConnectionClosedError = errors.New("client connection closed")
+)
+
 // Client is a middleman between the websocket connection and the hub.
 type Client struct {
-	mu        sync.Mutex
+	opts Options
+
 	closeOnce sync.Once
+
+	mu sync.Mutex
+
 	// The websocket connection.
 	conn *websocket.Conn
 
@@ -48,6 +59,7 @@ type Client struct {
 
 	// Shared NATS connection. Do not close this.
 	natsConn *nats.Conn
+
 	// NATS subscriptions
 	subscriptions []*nats.Subscription
 }
@@ -87,7 +99,7 @@ func (c *Client) statsSubscribe(cb func(msg *nats.Msg)) error {
 	return nil
 }
 
-// readPump pumps messages from the websocket connection to the hub.
+// readPump pumps messages from the websocket connection.
 //
 // The application runs readPump in a per-connection goroutine. The application
 // ensures that there is at most one reader on a connection by executing all
@@ -97,27 +109,35 @@ func (c *Client) readPump() {
 		c.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		c.execClientErrorCbs(err)
+	}
+	c.conn.SetPongHandler(func(string) error {
+		if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+			c.execClientErrorCbs(err)
+		}
+		return nil
+	})
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Err(err).Msg("unexpected close")
+				c.execClientErrorCbs(err)
 			}
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		// TODO: Do something with the message we received.
 		pm := NewProtocolMessage(c, message)
 		if err := ProtocolMessageHandler(pm); err != nil {
 			// TODO: Handle the errors here and respond back to user if necessary?
-			log.Err(err).Msg("protocol message handler error")
+			log.Debug().Err(err).Msg("protocol message handler error")
+			c.execClientErrorCbs(err)
 		}
 	}
 }
 
-// writePump pumps messages from the hub to the websocket connection.
+// writePump pumps messages from the send buffer to the websocket connection.
 //
 // A goroutine running writePump is started for each connection. The
 // application ensures that there is at most one writer to a connection by
@@ -133,11 +153,13 @@ func (c *Client) writePump() {
 		case message, ok := <-c.send:
 			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 				log.Err(err).Msg("problem setting write deadline for message")
+				c.execClientErrorCbs(err)
 			}
 			if !ok {
 				// The hub closed the channel.
 				if err := c.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
-					log.Err(err).Msg("problem writing close websocket message")
+					log.Debug().Err(err).Msg("problem writing close websocket message")
+					c.execClientErrorCbs(fmt.Errorf("problem writing close websocket message: %w", ClientConnectionClosedError))
 				}
 				return
 			}
@@ -149,6 +171,7 @@ func (c *Client) writePump() {
 			if _, err := w.Write(message); err != nil {
 				// Failed to write
 				log.Err(err).Msg("problem writing message")
+				c.execClientErrorCbs(err)
 			}
 
 			// Add queued messages to the current websocket message.
@@ -157,10 +180,12 @@ func (c *Client) writePump() {
 				if _, err := w.Write(newline); err != nil {
 					// Failed to write
 					log.Err(err).Msg("problem writing message")
+					c.execClientErrorCbs(err)
 				}
 				if _, err := w.Write(<-c.send); err != nil {
 					// Failed to write
 					log.Err(err).Msg("problem writing message")
+					c.execClientErrorCbs(err)
 				}
 			}
 
@@ -170,8 +195,10 @@ func (c *Client) writePump() {
 		case <-ticker.C:
 			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 				log.Err(err).Msg("problem setting write deadline for ticket")
+				c.execClientErrorCbs(err)
 			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				c.execClientErrorCbs(err)
 				// Disconnect
 				return
 			}
@@ -179,8 +206,16 @@ func (c *Client) writePump() {
 	}
 }
 
+func (c *Client) execClientErrorCbs(err error) {
+	for i := range c.opts.clientErrorCallbacks {
+		if c.opts.clientErrorCallbacks[i] != nil {
+			c.opts.clientErrorCallbacks[i](err)
+		}
+	}
+}
+
 // serveWs handles websocket requests from the peer.
-func serveWs(natsConn *nats.Conn, w http.ResponseWriter, r *http.Request) {
+func serveWs(opts Options, natsConn *nats.Conn, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Err(err).Msg("problem upgrading client connection")
@@ -190,6 +225,7 @@ func serveWs(natsConn *nats.Conn, w http.ResponseWriter, r *http.Request) {
 		natsConn: natsConn,
 		conn:     conn,
 		send:     make(chan []byte, 256),
+		opts:     opts,
 	}
 
 	// Allow collection of memory referenced by the caller by doing all work in

@@ -1,7 +1,8 @@
-package webapi
+package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/nickpoorman/nats-requeue/internal/key"
 	"github.com/nickpoorman/nats-requeue/internal/queue"
 	"github.com/nickpoorman/nats-requeue/internal/statspub"
+	"github.com/segmentio/ksuid"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -58,33 +60,27 @@ func TestWebsocket(t *testing.T) {
 	t.Cleanup(func() {
 		ncPub.Close()
 	})
-	spub, err := statspub.NewStatsPublisher(ncPub, qManager, instanceId, statspub.StatsPublishInterval(500*time.Millisecond))
+	spub, err := statspub.NewStatsPublisher(ncPub, qManager, instanceId, statspub.StatsPublishInterval(1*time.Millisecond))
 	assert.NoError(t, err)
 	t.Cleanup(func() {
 		spub.Close()
 	})
 
-	// ncSub, err := nats.Connect(s.ClientURL())
-	// assert.NoError(t, err)
-	// t.Cleanup(func() {
-	// 	ncSub.Close()
-	// })
-
 	// Run the app
-	mux, err := RunApp(s.ClientURL())
+	server, err := NewServer(
+		NATSURLs(s.ClientURL()),
+	)
 	assert.NoError(t, err)
+	defer server.Close()
 
-	httpServ := httptest.NewServer(mux)
+	httpServ := httptest.NewServer(server.mux)
 	defer httpServ.Close()
 
-	// Connect to websocket and listen for status messages
 	// Convert http://127.0.0.1 to ws://127.0.0.
 	u := "ws" + strings.TrimPrefix(httpServ.URL, "http") + "/ws"
-	// t.Log("addr: ", httpServ.Config.Addr)
-	// u := url.URL{Scheme: "ws", Host: , Path: "/ws"}
-	// u := httpServ.URL + "/ws"
 	t.Logf("connecting to %s", u)
 
+	// Connect to websocket
 	c, _, err := websocket.DefaultDialer.Dial(u, nil)
 	assert.NoError(t, err)
 	defer c.Close()
@@ -96,19 +92,75 @@ func TestWebsocket(t *testing.T) {
 		t.Fatal("send subscribe message", err)
 	}
 
+	// Wait for a few stats messages to publish
+	time.Sleep(10 * time.Millisecond)
+
 	t.Log("waiting for stats message from server")
 
-	_, message, err := c.ReadMessage()
-	assert.NoError(t, err)
+	var last ksuid.KSUID
+	for i := 0; i < 5; i++ {
+		_, message, err := c.ReadMessage()
+		assert.NoError(t, err)
 
-	// Check the message
-	var m StatsMessageEgress
-	assert.NoError(t, json.Unmarshal(message, &m))
+		// Check the message
+		var m StatsMessageEgress
+		assert.NoError(t, json.Unmarshal(message, &m))
 
-	// Assert the command is correct
-	assert.Equal(t, StatsMessage, m.Command)
-	assert.Equal(t, instanceId, m.Instance.InstanceId)
-	assert.Equal(t, int64(10), m.Instance.Queues[0].Enqueued)
+		t.Log("message key: ", m.Key)
+
+		// Assert the command is correct
+		assert.Equal(t, StatsMessage, m.Command)
+		assert.Equal(t, instanceId, m.Instance.InstanceId)
+		assert.Equal(t, int64(10), m.Instance.Queues[0].Enqueued)
+		assert.Equal(t, -1, ksuid.Compare(last, m.Key))
+		last = m.Key
+	}
 }
 
-// TODO: Add tests for disconnecting from both the client and server sides.
+func TestShutdownClientSide(t *testing.T) {
+	s := natsserver.RunRandClientPortServer()
+	t.Cleanup(func() {
+		s.Shutdown()
+	})
+
+	gotErr := make(chan error)
+	errCb := func(err error) {
+		gotErr <- err
+	}
+
+	// Run the app
+	server, err := NewServer(
+		NATSURLs(s.ClientURL()),
+		ClientErrorCallbacks(errCb),
+	)
+	assert.NoError(t, err)
+	defer server.Close()
+
+	httpServ := httptest.NewServer(server.mux)
+	defer httpServ.Close()
+
+	// Convert http://127.0.0.1 to ws://127.0.0.
+	u := "ws" + strings.TrimPrefix(httpServ.URL, "http") + "/ws"
+	t.Logf("connecting to %s", u)
+
+	// Connect to websocket
+	c, _, err := websocket.DefaultDialer.Dial(u, nil)
+	assert.NoError(t, err)
+	defer c.Close()
+
+	t.Log("writing stats subscribe message to server")
+
+	// Subscribe to stats
+	if err := c.WriteMessage(websocket.TextMessage, []byte(`{"c": 1}`)); err != nil {
+		t.Fatal("send subscribe message", err)
+	}
+
+	// Close the client connection
+	c.Close()
+
+	// Read the error
+	err = <-gotErr
+	assert.Error(t, err)
+	// We should get a client connection closed error.
+	assert.True(t, errors.Is(err, ClientConnectionClosedError))
+}

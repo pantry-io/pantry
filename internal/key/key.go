@@ -23,13 +23,13 @@ var (
 
 	// instanceID is a unique instance id. This may be used
 	// so that keys are unique across instances.
-	instanceID = newUID()
+	instanceID = NewUID()
 
 	Min = Key{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	Max = Key{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
 )
 
-func newUID() uint64 {
+func NewUID() uint64 {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
@@ -114,7 +114,7 @@ func (k Key) String() string {
 
 // Prints a readable representation of the key.
 // Do not try to sort the Print representation.
-// e.g., _q._m.testqueue.1.1.10846887956856003301
+// e.g., 1.1.10846887956856003301
 func (k Key) Print() string {
 	return fmt.Sprintf(
 		"%d.%d.%d",

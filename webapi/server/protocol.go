@@ -1,4 +1,4 @@
-package webapi
+package server
 
 import (
 	"encoding/json"
@@ -6,8 +6,10 @@ import (
 	"fmt"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nickpoorman/nats-requeue/internal/sequence"
 	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog/log"
+	"github.com/segmentio/ksuid"
 	"github.com/tidwall/gjson"
 )
 
@@ -103,14 +105,28 @@ func handleStatsSubscribe(pm ProtocolMessage) error {
 	return nil
 }
 
+var uniqueEgressSeq = sequence.NewSequence()
+
+type EgressMessage struct {
+	Key ksuid.KSUID `json:"seq"`
+}
+
+func NewEgressMessage() EgressMessage {
+	return EgressMessage{
+		Key: uniqueEgressSeq.Next(),
+	}
+}
+
 type StatsMessageEgress struct {
+	EgressMessage
 	Command  Command                       `json:"c"`
 	Instance protocol.InstanceStatsMessage `json:"instance"`
 }
 
 func NewStatsMessageEgress(p protocol.InstanceStatsMessage) StatsMessageEgress {
 	return StatsMessageEgress{
-		Command:  StatsMessage,
-		Instance: p,
+		EgressMessage: NewEgressMessage(),
+		Command:       StatsMessage,
+		Instance:      p,
 	}
 }

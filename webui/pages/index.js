@@ -13,24 +13,16 @@ import {
   Text,
   Link as EvergreenLink,
 } from 'evergreen-ui'
-import { WebSocketDemo } from '../components/WebSocketDemo'
+import useGlobal from '../store'
+
+const mapState = (state) => ({
+  connectionStatus: state.websocket.readyState,
+  statsMessages: state.statsMessages,
+})
 
 export default function Home() {
-  // const [data, setData] = useState({})
-  // const { pageviews, uniques, bounces, totaltime } = data
-
-  // async function loadData() {
-  //   setData(
-  //     await get(`/api/website/${websiteId}/metrics`, {
-  //       start_at: +startDate,
-  //       end_at: +endDate,
-  //     })
-  //   )
-  // }
-
-  // useEffect(() => {
-  //   loadData()
-  // }, [websiteId, startDate, endDate])
+  const [state] = useGlobal(mapState)
+  const { connectionStatus, statsMessages } = state
 
   return (
     <Layout home>
@@ -70,10 +62,19 @@ export default function Home() {
           <Text size={300}>Ack Latency p99</Text>
         </Pane>
       </Pane>
+      <Pane>
+        <div>
+          <span>The WebSocket is currently {connectionStatus}</span>
+          <ul>
+            {statsMessages.map((message, idx) => (
+              <span key={idx}>{message}</span>
+            ))}
+          </ul>
+        </div>
+      </Pane>
       <Pane height={500}>
         {/* <ResponsiveLine data={ResponsiveLineData} /> */}
       </Pane>
-      <WebSocketDemo></WebSocketDemo>
 
       {/* <section className={utilStyles.headingMd}>
         <p>[Your Self Introduction]</p>
