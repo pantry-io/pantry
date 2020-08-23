@@ -137,7 +137,7 @@ func newRun(until time.Time, queues []*queue.Queue) *run {
 	}
 
 	for _, q := range queues {
-		r.queues = append(r.queues, runQueue{q: q})
+		r.queues = append(r.queues, newRunQueue(q))
 	}
 
 	return r
@@ -153,12 +153,19 @@ type runQueue struct {
 	minCheckpoint key.Key
 }
 
+func newRunQueue(q *queue.Queue) runQueue {
+	return runQueue{
+		q: q,
+		// minCheckpoint: key.Min,
+	}
+}
+
 // Set the minCheckpoint on Republisher to be c if it is less than the
 // current one.
 func (rq *runQueue) setMinCheckpoint(c key.Key) {
 	rq.mu.Lock()
 	defer rq.mu.Unlock()
-	if key.Compare(rq.minCheckpoint, c) == -1 {
+	if rq.minCheckpoint.Len() != 0 && key.Compare(rq.minCheckpoint, c) == -1 {
 		// minCheckpoint is already less than c.
 		return
 	}

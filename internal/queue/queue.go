@@ -16,6 +16,9 @@ import (
 type Checkpoint []byte
 
 func (c Checkpoint) String() string {
+	if len(c) == 0 {
+		return "EMPTY_CHECKPOINT"
+	}
 	return ParseQueueKey(c).String()
 }
 
@@ -140,6 +143,7 @@ func (q *Queue) UpdateCheckpointCond(checkpoint Checkpoint, cond func(Checkpoint
 
 // This must be called with a lock acquired.
 func (q *Queue) updateCheckpoint(checkpoint Checkpoint) error {
+	debug.Assert(len(checkpoint) != 0, "trying to set an empty checkpoint")
 	if err := q.saveCheckpoint(checkpoint); err != nil {
 		return err
 	}
@@ -255,6 +259,8 @@ func (q *Queue) ReadFromCheckpoint(until time.Time, f func(QueueItem) bool) (Che
 	name := q.name
 	checkpoint := q.checkpoint
 	q.mu.RUnlock()
+
+	debug.Assert(len(checkpoint) != 0, fmt.Sprintf("checkpoint has not been initialized for queue: %s", name))
 
 	untilQK := NewQueueKeyForMessage(name, key.New(until))
 	log.Debug().

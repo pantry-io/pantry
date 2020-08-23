@@ -19,7 +19,7 @@ import (
 
 const (
 	// The interval in which to check for zombied instances.
-	DefaultReapInterval = 60 * time.Second
+	DefaultReapInterval = 10 * time.Second
 )
 
 // ReapedCallbackFunc is a callback to trigger when an instance is reaped.
@@ -147,13 +147,17 @@ func (r *Reaper) getOtherInstanceIds() ([]string, error) {
 }
 
 func (r *Reaper) reap() error {
-	instancePaths, err := r.getOtherInstanceIds()
+	log.Debug().Msg("reaper running")
+
+	instanceIds, err := r.getOtherInstanceIds()
 	if err != nil {
 		log.Err(err).Msg("problem gathering other instance paths")
 		return err
 	}
 
-	for _, instanceId := range instancePaths {
+	log.Debug().Msgf("reaper found instances: %v", instanceIds)
+
+	for _, instanceId := range instanceIds {
 		instancePath := badgerInternal.InstanceDir(r.dataDir, instanceId)
 
 		// Try to merge the instance on that directory.
@@ -188,19 +192,20 @@ func (r *Reaper) reap() error {
 }
 
 func (r *Reaper) mergeInstance(instancePath string) (bool, error) {
-	log.Debug().
-		Str("instancePath", instancePath).
-		Msg("attempting to merge badger instance")
-
 	instance, err := r.openBadgerInstance(instancePath)
 	if err != nil {
 		return false, err
 	}
 	if instance == nil {
+		log.Debug().Msgf("instance is locked: %s", instancePath)
 		// Instance is locked.
 		return false, nil
 	}
 	defer instance.Close()
+
+	log.Debug().
+		Str("instancePath", instancePath).
+		Msg("attempting to merge badger instance")
 
 	if err := copyBadger(r.dst, instance); err != nil {
 		return false, fmt.Errorf("merge instance: problem copying badger: %w", err)
@@ -235,6 +240,8 @@ func (r *Reaper) removeInstance(instancePath string) error {
 			_ = dirLockGuard.Release()
 		}
 	}()
+
+	log.Info().Msgf("removing instance directory: %s", instancePath)
 
 	if err := os.RemoveAll(instancePath); err != nil {
 		return fmt.Errorf("problem removing instance: %w", err)
@@ -278,32 +285,30 @@ func copyBadger(dst, src *badger.DB) error {
 	// implementation, which picks all valid key-values.
 	streamReader.KeyToList = func(key []byte, itr *badger.Iterator) (*pb.KVList, error) {
 		list := &pb.KVList{}
-		for ; itr.Valid(); itr.Next() {
-			item := itr.Item()
-			if item.IsDeletedOrExpired() {
-				break
-			}
-			if !bytes.Equal(key, item.Key()) {
-				// Break out on the first encounter with another key.
-				break
-			}
-
-			valCopy, err := item.ValueCopy(nil)
-			if err != nil {
-				return nil, err
-			}
-			kv := &pb.KV{
-				Key:       item.KeyCopy(nil),
-				Value:     valCopy,
-				UserMeta:  []byte{item.UserMeta()},
-				Version:   item.Version(),
-				ExpiresAt: item.ExpiresAt(),
-			}
-			list.Kv = append(list.Kv, kv)
-
-			// We only care about collecting one version
-			break
+		if !itr.Valid() {
+			return list, nil
 		}
+		item := itr.Item()
+		if item.IsDeletedOrExpired() {
+			return list, nil
+		}
+		if !bytes.Equal(key, item.Key()) {
+			// Break out on the first encounter with another key.
+			return list, nil
+		}
+
+		valCopy, err := item.ValueCopy(nil)
+		if err != nil {
+			return nil, err
+		}
+		kv := &pb.KV{
+			Key:       item.KeyCopy(nil),
+			Value:     valCopy,
+			UserMeta:  []byte{item.UserMeta()},
+			Version:   item.Version(),
+			ExpiresAt: item.ExpiresAt(),
+		}
+		list.Kv = append(list.Kv, kv)
 		return list, nil
 	}
 

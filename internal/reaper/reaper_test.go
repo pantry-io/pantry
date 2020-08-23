@@ -62,6 +62,9 @@ func createBadgerInstance(dataDir string) (string, *badger.DB, error) {
 func createZombieInstance(dataDir string) (string, []kv, error) {
 	var kvs []kv
 	instanceId, db, err := createBadgerInstance(dataDir)
+	if err != nil {
+		return instanceId, kvs, err
+	}
 	defer db.Close()
 
 	wb := db.NewWriteBatch()

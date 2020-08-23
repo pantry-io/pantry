@@ -49,7 +49,7 @@ type Server struct {
 
 	mu       sync.Mutex
 	natsConn *nats.Conn
-	mux      *http.ServeMux
+	Mux      *http.ServeMux
 }
 
 func NewServer(options ...Option) (*Server, error) {
@@ -72,10 +72,13 @@ func NewServer(options ...Option) (*Server, error) {
 	}
 	s.natsConn = natsConn
 
-	s.mux = http.NewServeMux()
+	s.Mux = http.NewServeMux()
 
-	// http.HandleFunc("/", serveHome)
-	s.mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	s.Mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprint(w, "OK")
+	})
+	s.Mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(opts, natsConn, w, r)
 	})
 

@@ -38,6 +38,12 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+func getUpgrader() websocket.Upgrader {
+	// TODO: Add a specific list of origins to check.
+	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
+	return upgrader
+}
+
 var (
 	// Client errors
 	ClientConnectionClosedError = errors.New("client connection closed")
@@ -216,7 +222,8 @@ func (c *Client) execClientErrorCbs(err error) {
 
 // serveWs handles websocket requests from the peer.
 func serveWs(opts Options, natsConn *nats.Conn, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	upg := getUpgrader()
+	conn, err := upg.Upgrade(w, r, nil)
 	if err != nil {
 		log.Err(err).Msg("problem upgrading client connection")
 		return

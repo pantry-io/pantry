@@ -8,7 +8,6 @@ const StatsSubscribe = 1
 const StatsMessage = 2
 
 const mapActions = (actions) => {
-  console.log('actions: ', actions)
   return {
     addStatsMessage: actions.stats.addMessage,
     setWsApiReadyState: actions.wsapi.setReadyState,
@@ -19,7 +18,7 @@ export const WebSocketWrapper = (props) => {
   const [, actions] = useGlobal(null, mapActions)
   // Public API that will echo messages sent to it back to the client
   // TODO: We'll need to set this based on dotenv
-  const [socketUrl, setSocketUrl] = useState('wss://localhost:3030')
+  const [socketUrl, setSocketUrl] = useState('ws://heat.ts:8080/ws')
   const {
     sendMessage,
     sendJsonMessage,

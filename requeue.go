@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -42,7 +43,7 @@ const (
 	// `requeue.foo`, `requeue.foo.bar`, and `requeue.foo.bar.baz`.
 	// ">" matches any length of the tail of a subject, and can only be the last token
 	// E.g. 'foo.>' will match 'foo.bar', 'foo.bar.baz', 'foo.foo.bar.bax.22'.
-	DefaultNatsSubject = "requeue.>"
+	DefaultNatsSubject = "requeue.msgs.>"
 
 	// DefaultNatsQueueName is the default queue to subscribe to. Messages from
 	// the queue will be distributed amongst the the subscribers of the queue.
@@ -286,6 +287,7 @@ type Conn struct {
 	closeOnce sync.Once
 	closed    chan struct{}
 	closers   closers
+	closing   int32
 }
 
 func NewConn(o Options) *Conn {
@@ -308,6 +310,7 @@ func NewConn(o Options) *Conn {
 
 func (c *Conn) Close() {
 	c.closeOnce.Do(func() {
+		atomic.StoreInt32(&c.closing, 1)
 		log.Info().Msg("requeue: closing...")
 		// Stop the nats producers from sending out messages on nats.
 		c.closers.natsProducers.SignalAndWait()
@@ -367,6 +370,11 @@ func (c *Conn) NATSClosedHandler(nc *nats.Conn) {
 func (c *Conn) initNATS() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if atomic.LoadInt32(&c.closing) == 1 {
+		// Don't init
+		return nil
+	}
 
 	var err error
 	o := c.Opts
@@ -448,10 +456,17 @@ func (c *Conn) initBadger() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if atomic.LoadInt32(&c.closing) == 1 {
+		// Don't init
+		return nil
+	}
+
 	// Create a new instance in our dataDir
 	if err := os.MkdirAll(c.instanceDir, os.ModePerm); err != nil {
 		return fmt.Errorf("init badger: create instance directory: %w", err)
 	}
+
+	log.Debug().Str("dir", c.instanceDir).Msg("started new badger instance")
 
 	// We will then create a new instance in this dir.
 	db, err := badgerInternal.Open(c.instanceDir)
@@ -485,6 +500,11 @@ func (c *Conn) initBadger() error {
 func (c *Conn) initNatsConsumers() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	if atomic.LoadInt32(&c.closing) == 1 {
+		// Don't init
+		return nil
+	}
 
 	c.closers.natsConsumers.AddRunning(DefaultNumConcurrentBatchTransactions)
 
@@ -583,6 +603,11 @@ func (c *Conn) initNatsProducers() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if atomic.LoadInt32(&c.closing) == 1 {
+		// Don't init
+		return nil
+	}
+
 	// Load up all the queues we have on disk and manage them.
 	manager, err := queue.NewManager(c.badgerDB)
 	if err != nil {
@@ -607,11 +632,13 @@ func (c *Conn) initNatsProducers() error {
 
 		// close the republisher
 		if c.republisher != nil {
+			log.Debug().Msg("closing republisher...")
 			c.republisher.Close()
 		}
 
 		// close the queue manager
 		if c.qManager != nil {
+			log.Debug().Msg("closing queue manager...")
 			c.qManager.Close()
 		}
 	}()
@@ -622,6 +649,11 @@ func (c *Conn) initNatsProducers() error {
 func (c *Conn) initReaper() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if atomic.LoadInt32(&c.closing) == 1 {
+		// Don't init
+		return nil
+	}
 
 	// Create our reaper
 	reaper, err := reaper.NewReaper(

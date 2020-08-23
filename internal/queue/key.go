@@ -6,6 +6,7 @@ import (
 
 	"github.com/nickpoorman/nats-requeue/internal/debug"
 	"github.com/nickpoorman/nats-requeue/internal/key"
+	"github.com/rs/zerolog/log"
 )
 
 // --------------------------------------------------------------------------
@@ -58,7 +59,10 @@ func NewQueueKeyForState(queue, property string) QueueKey {
 }
 
 func ParseQueueKey(k []byte) QueueKey {
+	debug.Assert(len(k) > 0, fmt.Errorf("k is empty"))
 	spl := bytes.SplitN(k, []byte(sep), 4)
+	log.Debug().Msgf("spl length: %d | k: [%v]", len(spl), k)
+	debug.Assert(len(spl) == 4, fmt.Errorf("queue key spl is not correct length: %+v", spl))
 	// The last slice will be the remainer. Assert it's the correct length.
 	debug.Assert(len(spl[3]) == key.Size, fmt.Errorf("invalid QueueKey.Key size: Expected=%d Got=%d QueueKey=%v", key.Size, len(spl[3]), spl[3]))
 	return QueueKey{

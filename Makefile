@@ -29,4 +29,8 @@ left:
 right:
 	GOMAXPROCS=128 CGO_ENABLED=0 go run cmd/right/main.go
 
-.PHONY: default build generate security test vet protocol left right ci
+dev:
+	go build -tags assert -o bin/requeue ./cmd/requeue/main.go
+	GOMAXPROCS=128 ./bin/requeue -d ./tmp/
+
+.PHONY: default build generate security test vet protocol left right ci dev

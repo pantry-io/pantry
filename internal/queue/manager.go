@@ -71,7 +71,7 @@ func (m *Manager) initBackgroundTasks() {
 			t.Stop()
 		}()
 		t.Loop(func() bool {
-			m.checkQueueStates()
+			// m.checkQueueStates()
 			return true
 		})
 	}()

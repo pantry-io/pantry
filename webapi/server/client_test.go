@@ -73,7 +73,7 @@ func TestWebsocket(t *testing.T) {
 	assert.NoError(t, err)
 	defer server.Close()
 
-	httpServ := httptest.NewServer(server.mux)
+	httpServ := httptest.NewServer(server.Mux)
 	defer httpServ.Close()
 
 	// Convert http://127.0.0.1 to ws://127.0.0.
@@ -136,7 +136,7 @@ func TestShutdownClientSide(t *testing.T) {
 	assert.NoError(t, err)
 	defer server.Close()
 
-	httpServ := httptest.NewServer(server.mux)
+	httpServ := httptest.NewServer(server.Mux)
 	defer httpServ.Close()
 
 	// Convert http://127.0.0.1 to ws://127.0.0.

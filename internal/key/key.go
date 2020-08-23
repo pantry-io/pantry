@@ -112,6 +112,10 @@ func (k Key) String() string {
 	return k.Print()
 }
 
+func (k Key) Len() int {
+	return len(k)
+}
+
 // Prints a readable representation of the key.
 // Do not try to sort the Print representation.
 // e.g., 1.1.10846887956856003301
