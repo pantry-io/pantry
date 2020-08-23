@@ -19,7 +19,7 @@ import (
 
 const (
 	// The interval in which to check for zombied instances.
-	DefaultReapInterval = 10 * time.Second
+	DefaultReapInterval = 30 * time.Second
 )
 
 // ReapedCallbackFunc is a callback to trigger when an instance is reaped.

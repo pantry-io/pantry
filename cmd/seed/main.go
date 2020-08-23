@@ -31,6 +31,7 @@ var showHelp = flag.Bool("h", false, "Show help message")
 var natsListenSubject = flag.String("nats-listen-subject", requeue.DefaultNatsSubject, "The subject to listen for messages on. These are the messages that will be queued up.")
 var natsURLs = flag.String("nats-urls", requeue.DefaultNatsServers, "Comma separated NATS server URLs ")
 var natsUserCredsFile = flag.String("nats-creds", "", "User Credentials File")
+var waitForRepublish = flag.Bool("wait-for-republish", false, "Wait for the events to be republished.")
 
 func main() {
 	flag.Usage = usage
@@ -84,25 +85,26 @@ func main() {
 	ch := make(chan int)
 
 	var republishedWG sync.WaitGroup
-	republishedWG.Add(total)
-
 	originalSubject := "foo.bar.baz"
-	_, err = nc.Subscribe(originalSubject, func(msg *nats.Msg) {
-		log.Info().Msgf("got replayed message: %s", string(msg.Data))
-		if err := msg.Respond(nil); err != nil {
-			log.Fatal().Err(fmt.Errorf("failed to respond to message: %w", err)).Send()
+	if *waitForRepublish {
+		republishedWG.Add(total)
+		_, err = nc.Subscribe(originalSubject, func(msg *nats.Msg) {
+			log.Info().Msgf("got replayed message: %s", string(msg.Data))
+			if err := msg.Respond(nil); err != nil {
+				log.Fatal().Err(fmt.Errorf("failed to respond to message: %w", err)).Send()
+			}
+			eventsMu.Lock()
+			m := string(msg.Data)
+			if _, ok := events[m]; ok {
+				delete(events, m)
+				republishedWG.Done()
+				log.Info().Msgf("replay events remaining: %d", len(events))
+			}
+			eventsMu.Unlock()
+		})
+		if err != nil {
+			log.Fatal().Err(err).Msg("nats subscribe")
 		}
-		eventsMu.Lock()
-		m := string(msg.Data)
-		if _, ok := events[m]; ok {
-			delete(events, m)
-			republishedWG.Done()
-			log.Info().Msgf("replay events remaining: %d", len(events))
-		}
-		eventsMu.Unlock()
-	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("nats subscribe")
 	}
 
 	go func() {
@@ -158,13 +160,17 @@ func main() {
 
 	log.Info().Msgf("pending: %d", pending)
 
-	done = true
+	// Wait for all the messages to have been republished
+	republishedWG.Wait()
 
+	log.Info().Msg("got all messages")
+
+	done = true
 }
 
 func buildPayload(i int, originalSubject string) protocol.RequeueMessage {
 	msg := protocol.DefaultRequeueMessage()
-	msg.Retries = 1
+	msg.Retries = 1000
 	msg.TTL = uint64(5 * 24 * time.Hour)
 	msg.Delay = uint64(1 * time.Nanosecond)
 	msg.BackoffStrategy = protocol.BackoffStrategy_Exponential

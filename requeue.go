@@ -21,6 +21,7 @@ import (
 	"github.com/nickpoorman/nats-requeue/internal/queue"
 	"github.com/nickpoorman/nats-requeue/internal/reaper"
 	"github.com/nickpoorman/nats-requeue/internal/republisher"
+	"github.com/nickpoorman/nats-requeue/internal/statspub"
 	"github.com/nickpoorman/nats-requeue/protocol"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -225,6 +226,12 @@ func (o Options) Connect() (*Conn, error) {
 		return nil, err
 	}
 
+	// Start the service responsible for publishing stats
+	if err := rc.initStatsPublisher(); err != nil {
+		rc.Close()
+		return nil, err
+	}
+
 	// Start up the zombie badger store reaper.
 	if err := rc.initReaper(); err != nil {
 		rc.Close()
@@ -255,11 +262,12 @@ func (o Options) Connect() (*Conn, error) {
 }
 
 type closers struct {
-	nats          *y.Closer
-	natsConsumers *y.Closer
-	badger        *y.Closer
-	reaper        *y.Closer
-	natsProducers *y.Closer
+	nats           *y.Closer
+	natsConsumers  *y.Closer
+	badger         *y.Closer
+	reaper         *y.Closer
+	natsProducers  *y.Closer
+	statsPublisher *y.Closer
 }
 
 type Conn struct {
@@ -284,6 +292,9 @@ type Conn struct {
 	qManager    *queue.Manager
 	republisher *republisher.Republisher
 
+	// Stats publisher for queues
+	statsPublisher *statspub.StatsPublisher
+
 	closeOnce sync.Once
 	closed    chan struct{}
 	closers   closers
@@ -299,11 +310,12 @@ func NewConn(o Options) *Conn {
 		instanceId:  instanceId,
 		instanceDir: filepath.Join(o.dataDir, instanceId),
 		closers: closers{
-			nats:          y.NewCloser(0),
-			natsConsumers: y.NewCloser(0),
-			badger:        y.NewCloser(0),
-			reaper:        y.NewCloser(0),
-			natsProducers: y.NewCloser(0),
+			nats:           y.NewCloser(0),
+			natsConsumers:  y.NewCloser(0),
+			badger:         y.NewCloser(0),
+			reaper:         y.NewCloser(0),
+			natsProducers:  y.NewCloser(0),
+			statsPublisher: y.NewCloser(0),
 		},
 	}
 }
@@ -312,6 +324,8 @@ func (c *Conn) Close() {
 	c.closeOnce.Do(func() {
 		atomic.StoreInt32(&c.closing, 1)
 		log.Info().Msg("requeue: closing...")
+		// Stop the stats publisher
+		c.closers.statsPublisher.SignalAndWait()
 		// Stop the nats producers from sending out messages on nats.
 		c.closers.natsProducers.SignalAndWait()
 		// Stop nats
@@ -640,6 +654,39 @@ func (c *Conn) initNatsProducers() error {
 		if c.qManager != nil {
 			log.Debug().Msg("closing queue manager...")
 			c.qManager.Close()
+		}
+	}()
+
+	return nil
+}
+
+func (c *Conn) initStatsPublisher() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if atomic.LoadInt32(&c.closing) == 1 {
+		// Don't init
+		return nil
+	}
+
+	var err error
+	c.statsPublisher, err = statspub.NewStatsPublisher(c.nc, c.qManager, c.instanceId)
+	if err != nil {
+		return err
+	}
+
+	c.closers.statsPublisher.AddRunning(1)
+	go func() {
+		defer c.closers.statsPublisher.Done()
+		<-c.closers.statsPublisher.HasBeenClosed()
+
+		log.Debug().Msg("closing stats publisher...")
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		// close the stats publisher
+		if c.statsPublisher != nil {
+			c.statsPublisher.Close()
 		}
 	}()
 

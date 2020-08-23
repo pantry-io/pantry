@@ -1,6 +1,7 @@
 package republisher
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 	"time"
@@ -150,7 +151,9 @@ type runQueue struct {
 	// In each run, keep track of the minimum checkpoint for any enqueued messages
 	// back to our store. This is used to set the checkpoint once the run has
 	// completed.
-	minCheckpoint key.Key
+	// TODO: I think this needs to be a QueueKey not a key.Key
+	// minCheckpoint key.Key
+	minCheckpoint queue.Checkpoint
 }
 
 func newRunQueue(q *queue.Queue) runQueue {
@@ -162,10 +165,11 @@ func newRunQueue(q *queue.Queue) runQueue {
 
 // Set the minCheckpoint on Republisher to be c if it is less than the
 // current one.
-func (rq *runQueue) setMinCheckpoint(c key.Key) {
+func (rq *runQueue) setMinCheckpoint(c queue.Checkpoint) {
 	rq.mu.Lock()
 	defer rq.mu.Unlock()
-	if rq.minCheckpoint.Len() != 0 && key.Compare(rq.minCheckpoint, c) == -1 {
+	// if len(rq.minCheckpoint) != 0 && key.Compare(rq.minCheckpoint, c) == -1 {
+	if len(rq.minCheckpoint) != 0 && bytes.Compare(rq.minCheckpoint.Bytes(), c.Bytes()) == -1 {
 		// minCheckpoint is already less than c.
 		return
 	}
@@ -176,7 +180,10 @@ func (rq *runQueue) setMinCheckpoint(c key.Key) {
 func (rq *runQueue) saveCheckpoint() error {
 	rq.mu.Lock()
 	defer rq.mu.Unlock()
-	if err := rq.q.UpdateCheckpoint(rq.minCheckpoint.Bytes()); err != nil {
+	// We need the QueueKey for this queue and checkpoint
+	// qk := queue.NewQueueKeyForState(rq.q.Name(), queue.CheckpointProperty)
+	// qk.Key = rq.minCheckpoint
+	if err := rq.q.UpdateCheckpoint(rq.minCheckpoint); err != nil {
 		return fmt.Errorf("saveCheckpoint failed: %w", err)
 	}
 	return nil
@@ -366,8 +373,9 @@ func (rp *Republisher) processQueue(rq *runQueue, ch chan<- runQueueItem, untilT
 		checkpoint.String(),
 	)
 
+	// TODO: This is probably wrong. I think the checkpoint needs to be a QueueKey and not a Key.
 	// Set the checkpoint for this runQueue.
-	rq.setMinCheckpoint(checkpoint.Key())
+	rq.setMinCheckpoint(checkpoint)
 }
 
 // This should be called with a lock already held on rp.
@@ -493,7 +501,7 @@ func (rp *Republisher) createEntry(rqi runQueueItem, fb *flatbuf.RequeueMessage)
 	// It is possible for our new key to be after our checkpoint.
 	// Update the minimum equeued time, so that Republisher may accurately
 	// update the checkpoint once the run has completed.
-	rqi.runQueue.setMinCheckpoint(persistKey)
+	rqi.runQueue.setMinCheckpoint(qk.Bytes())
 
 	return badger.NewEntry(qk.Bytes(), rqi.queueItem.V).WithTTL(time.Duration(fb.Ttl())), nil
 }

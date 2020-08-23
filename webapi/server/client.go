@@ -162,7 +162,7 @@ func (c *Client) writePump() {
 				c.execClientErrorCbs(err)
 			}
 			if !ok {
-				// The hub closed the channel.
+				// The client may have closed the channel
 				if err := c.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
 					log.Debug().Err(err).Msg("problem writing close websocket message")
 					c.execClientErrorCbs(fmt.Errorf("problem writing close websocket message: %w", ClientConnectionClosedError))

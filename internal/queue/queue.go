@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// TODO: We should remove this and use QueueKey or at lease rename this to QueueKeyRaw
 type Checkpoint []byte
 
 func (c Checkpoint) String() string {
@@ -27,7 +28,7 @@ func (c Checkpoint) Bytes() []byte {
 }
 
 func (c Checkpoint) Key() key.Key {
-	return c.Bytes()
+	return ParseQueueKey(c).Key
 }
 
 type Queue struct {
@@ -65,9 +66,11 @@ func NewQueue(db *badger.DB, name string) (*Queue, error) {
 	go func() {
 		<-q.quit
 		q.mu.Lock()
+		// Close batch writer.
 		if q.batchWriter != nil {
 			q.batchWriter.Close()
 		}
+		// Close queue stats.
 		if q.Stats != nil {
 			q.Stats.Close()
 		}

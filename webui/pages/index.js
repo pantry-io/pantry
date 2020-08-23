@@ -67,7 +67,11 @@ export default function Home() {
           <span>The WebSocket is currently {connectionStatus}</span>
           <ul>
             {statsMessages.map((message, idx) => (
-              <span key={idx}>{message}</span>
+              <li key={message['seq'] || idx}>
+                {typeof message !== 'string'
+                  ? JSON.stringify(message)
+                  : message}
+              </li>
             ))}
           </ul>
         </div>

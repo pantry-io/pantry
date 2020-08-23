@@ -159,6 +159,8 @@ func (qs *QueueStats) refreshStats() error {
 		return err
 	}
 
+	log.Debug().Msgf("storing new stats count: %d", count)
+
 	// Update the count
 	atomic.StoreInt64(&qs.count, count)
 

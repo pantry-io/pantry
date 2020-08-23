@@ -27,7 +27,11 @@ export const WebSocketWrapper = (props) => {
     readyState,
     getWebSocket,
   } = useWebSocket(socketUrl, {
-    onOpen: () => console.log('opened'),
+    onOpen: () => {
+      console.log('opened')
+      // Emit a message to subscribe to stats
+      sendJsonMessage({ c: 1 })
+    },
     // Will attempt to reconnect on all close events, such as server shutting down
     shouldReconnect: (closeEvent) => true,
   })
